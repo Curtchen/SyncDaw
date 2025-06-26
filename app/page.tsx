@@ -299,8 +299,12 @@ export default function DAWInterface() {
         setCurrentTime(prev => {
           let nextTime = prev + 0.1
           
+          // 调试输出：检查时间推进逻辑
+          console.log(`⏰ DAW Time Progress - prev: ${prev.toFixed(1)}, next: ${nextTime.toFixed(1)}, isLoop: ${isLoopEnabled}, loopEnd: ${loopEnd}, duration: ${duration}`)
+          
           // Handle loop functionality
           if (isLoopEnabled && nextTime >= loopEnd) {
+            console.log(`🔄 Loop reset: ${nextTime.toFixed(1)} -> ${loopStart}`)
             nextTime = loopStart
           } else if (nextTime >= duration) {
             if (isPlaying && !isLoopEnabled) {
@@ -309,8 +313,10 @@ export default function DAWInterface() {
             if (isRecording) {
               // Continue recording beyond the initial duration
               setDuration(prev => prev + 10) // Extend duration by 10 seconds
+              console.log(`⏰ Extended duration by 10s, new duration: ${duration + 10}`)
             }
             if (!isLoopEnabled) {
+              console.log(`⏰ Reached duration limit: ${nextTime.toFixed(1)}`)
               return nextTime
             }
           }

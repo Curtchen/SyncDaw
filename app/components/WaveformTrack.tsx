@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 
 interface WaveformTrackProps {
   isRecording: boolean
@@ -9,14 +9,16 @@ interface WaveformTrackProps {
   duration: number
   currentTime: number
   height: number
+  width: number
 }
 
 export default function WaveformTrack({ 
+  trackId,
   isRecording, 
   isArmed,
-  trackId, 
-  duration, 
   currentTime,
+  duration,
+  width,
   height 
 }: WaveformTrackProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -24,13 +26,21 @@ export default function WaveformTrack({
   const audioContextRef = useRef<AudioContext>()
   const analyserRef = useRef<AnalyserNode>()
   const microphoneRef = useRef<MediaStreamAudioSourceNode>()
-  const [waveformData, setWaveformData] = useState<number[]>([])
-  const [recordingStartTime, setRecordingStartTime] = useState<number>(0)
-
+  // 记录录音开始的时间（AudioContext.currentTime）
+  const recordStartRef = useRef<number>(0)
+  // 记录最后写入的像素位置
+  const lastRecordedXRef = useRef<number>(-1)
+  // per-pixel min/max data for waveform axis
+  const minDataRef = useRef<number[]>([])
+  const maxDataRef = useRef<number[]>([])
+   
   useEffect(() => {
+    // reset data and start/stop audio capture
     if (isRecording && isArmed) {
+      // initialize per-pixel storage
+      minDataRef.current = new Array(width).fill(0)
+      maxDataRef.current = new Array(width).fill(0)
       startRecording()
-      setRecordingStartTime(currentTime)
     } else {
       stopRecording()
     }
@@ -38,28 +48,26 @@ export default function WaveformTrack({
     return () => {
       stopRecording()
     }
-  }, [isRecording, isArmed])
+  }, [isRecording, isArmed, width])
 
   useEffect(() => {
-    if (canvasRef.current) {
-      drawWaveform()
-    }
-  }, [waveformData, currentTime, duration, height])
+    // redraw whenever timeline updates
+    drawWaveform()
+  }, [currentTime, duration, width, height])
 
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
+      // 记录开始时间
+      recordStartRef.current = audioContextRef.current.currentTime
       analyserRef.current = audioContextRef.current.createAnalyser()
       microphoneRef.current = audioContextRef.current.createMediaStreamSource(stream)
-      
-      analyserRef.current.fftSize = 512
+      analyserRef.current.fftSize = 2048
       analyserRef.current.smoothingTimeConstant = 0.8
-      const bufferLength = analyserRef.current.frequencyBinCount
-      
       microphoneRef.current.connect(analyserRef.current)
-      
+      // start capturing per-pixel min/max
       captureAudio()
     } catch (err) {
       console.error('Error accessing microphone:', err)
@@ -67,98 +75,78 @@ export default function WaveformTrack({
   }
 
   const stopRecording = () => {
-    if (animationRef.current) {
-      cancelAnimationFrame(animationRef.current)
-    }
-    
-    if (microphoneRef.current) {
-      microphoneRef.current.disconnect()
-    }
-    
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      audioContextRef.current.close()
-    }
+    if (animationRef.current) cancelAnimationFrame(animationRef.current)
+     
+    if (microphoneRef.current) microphoneRef.current.disconnect()
+     
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') audioContextRef.current.close()
   }
 
   const captureAudio = () => {
-    if (!analyserRef.current) return
-
+    if (!analyserRef.current || !audioContextRef.current) return
+    // get time-domain data
     const bufferLength = analyserRef.current.frequencyBinCount
     const dataArray = new Uint8Array(bufferLength)
-    
     analyserRef.current.getByteTimeDomainData(dataArray)
-    
-    // 计算音频数据的平均值来生成波形
-    let sum = 0
-    for (let i = 0; i < bufferLength; i++) {
-      const value = (dataArray[i] - 128) / 128.0
-      sum += value * value
+    // compute min/max sample
+    let minSample = 1, maxSample = -1
+    for (let i = 0; i < dataArray.length; i++) {
+      const sample = (dataArray[i] - 128) / 128
+      minSample = Math.min(minSample, sample)
+      maxSample = Math.max(maxSample, sample)
     }
-    const rms = Math.sqrt(sum / bufferLength)
-    const amplitude = rms * 100 // 放大波形
-    
-    // 将新的振幅数据添加到波形数据中
-    setWaveformData(prev => [...prev, amplitude])
-    
+    // 计算录音进度对应的像素
+    const elapsed = audioContextRef.current.currentTime - recordStartRef.current
+    const playheadX = Math.floor((elapsed / duration) * width)
+    if (playheadX >= 0 && playheadX < width) {
+      minDataRef.current[playheadX] = minSample
+      maxDataRef.current[playheadX] = maxSample
+      lastRecordedXRef.current = playheadX
+    }
+    drawWaveform()
     animationRef.current = requestAnimationFrame(captureAudio)
   }
 
   const drawWaveform = () => {
-    if (!canvasRef.current) return
-    
-    const canvas = canvasRef.current
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    const canvas = canvasRef.current; if (!canvas) return
+    const ctx = canvas.getContext('2d'); if (!ctx) return
+    canvas.width = width
+    canvas.height = height
+    const centerY = height / 2
 
-    const width = canvas.width
-    const canvasHeight = canvas.height
-
-    // 清空画布
-    ctx.clearRect(0, 0, width, canvasHeight)
-
-    if (waveformData.length === 0) return
-
-    // 计算像素每秒
-    const pixelsPerSecond = width / duration
-    const samplesPerSecond = 10 // 每秒10个采样点
-    
-    // 绘制波形
+    // background
+    ctx.fillStyle = '#1a1a1a'
+    ctx.fillRect(0, 0, width, height)
+    // 绘制已录制的波形（像素最小/最大值）
     ctx.strokeStyle = '#3b82f6'
     ctx.lineWidth = 1
-    ctx.beginPath()
-
-    for (let i = 0; i < waveformData.length; i++) {
-      const x = (recordingStartTime + i / samplesPerSecond) * pixelsPerSecond
-      const amplitude = waveformData[i]
-      const y1 = canvasHeight / 2 - amplitude
-      const y2 = canvasHeight / 2 + amplitude
-      
-      // 只绘制在当前时间之前的波形
-      if (x <= currentTime * pixelsPerSecond) {
-        // 绘制正波形
-        ctx.moveTo(x, canvasHeight / 2)
-        ctx.lineTo(x, y1)
-        ctx.moveTo(x, canvasHeight / 2)
-        ctx.lineTo(x, y2)
-      }
+    // 根据状态选择绘制范围：录制时到 lastRecordedX，否则到当前时间的像素
+    const endX = isRecording ? lastRecordedXRef.current : Math.floor((currentTime / duration) * width)
+    for (let x = 0; x <= endX; x++) {
+      const yMin = centerY - (minDataRef.current[x] || 0) * height * 0.4
+      const yMax = centerY - (maxDataRef.current[x] || 0) * height * 0.4
+      ctx.beginPath()
+      ctx.moveTo(x, yMin)
+      ctx.lineTo(x, yMax)
+      ctx.stroke()
     }
-    
-    ctx.stroke()
-
-    // 如果正在录制，绘制实时波形指示器
-    if (isRecording && isArmed) {
-      const currentX = currentTime * pixelsPerSecond
-      const currentAmplitude = waveformData[waveformData.length - 1] || 0
-      
-      ctx.fillStyle = '#ef4444'
-      ctx.fillRect(currentX - 1, canvasHeight / 2 - currentAmplitude, 2, currentAmplitude * 2)
+    // draw playhead / indicator
+    const playX = isRecording ? lastRecordedXRef.current : Math.floor((currentTime / duration) * width)
+    ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2
+    ctx.beginPath(); ctx.moveTo(playX, 0); ctx.lineTo(playX, height); ctx.stroke()
+    if (isRecording) {
+      ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.arc(playX, centerY, 2, 0, 2 * Math.PI); ctx.fill()
     }
+    // optional status
+    ctx.fillStyle = '#888888'
+    ctx.font = '10px Arial'
+    ctx.fillText(`${isRecording ? 'REC' : ''}`, 5, 12)
   }
 
   return (
     <canvas
       ref={canvasRef}
-      width={800}
+      width={width}
       height={height}
       className="absolute inset-0 pointer-events-none"
       style={{ 

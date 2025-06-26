@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import LiveWaveform from './LiveWaveform'
+import WaveformTrack from './WaveformTrack'
 
 interface Track {
   id: string
@@ -59,7 +59,7 @@ export default function TrackContent({
     >
       {/* 波形显示 */}
       <div className="w-full h-full">
-        <LiveWaveform
+        <WaveformTrack
           trackId={trackId}
           isRecording={isRecording}
           isArmed={track.armed}
