@@ -118,18 +118,21 @@ export default function WaveformTrack({
     ctx.fillStyle = '#1a1a1a'
     ctx.fillRect(0, 0, width, height)
     // 绘制已录制的波形（像素最小/最大值）
+    const amplitudeScale = height * 0.8  // 增加高度占比，更明显
     ctx.strokeStyle = '#3b82f6'
-    ctx.lineWidth = 1
+    ctx.lineWidth = 2  // 加粗线条
+    ctx.globalAlpha = 0.8  // 降低透明度，波形更清晰
     // 根据状态选择绘制范围：录制时到 lastRecordedX，否则到当前时间的像素
     const endX = isRecording ? lastRecordedXRef.current : Math.floor((currentTime / duration) * width)
     for (let x = 0; x <= endX; x++) {
-      const yMin = centerY - (minDataRef.current[x] || 0) * height * 0.4
-      const yMax = centerY - (maxDataRef.current[x] || 0) * height * 0.4
+      const yMin = centerY - (minDataRef.current[x] || 0) * amplitudeScale
+      const yMax = centerY - (maxDataRef.current[x] || 0) * amplitudeScale
       ctx.beginPath()
       ctx.moveTo(x, yMin)
       ctx.lineTo(x, yMax)
       ctx.stroke()
     }
+    ctx.globalAlpha = 1.0  // 恢复不透明度
     // draw playhead / indicator
     const playX = isRecording ? lastRecordedXRef.current : Math.floor((currentTime / duration) * width)
     ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2
