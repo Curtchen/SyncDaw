@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #1a1a1a; color: white; }
+        button { padding: 10px 20px; margin: 10px; font-size: 16px; cursor: pointer; }
+        #status { margin: 20px 0; padding: 10px; background: #333; border-radius: 5px; }
+        #log { background: #000; color: #0f0; font-family: monospace; padding: 10px; height: 300px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h1>浏览器音频 API 测试</h1>
+    
+    <button onclick="testUserMedia()">测试麦克风权限</button>
+    <button onclick="testAudioContext()">测试 AudioContext</button>
+    <button onclick="testBasicClick()">测试基本点击</button>
+    <button onclick="clearLog()">清除日志</button>
+    
+    <div id="status">状态：等待测试...</div>
+    <div id="log"></div>
+
+    <script>
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            logDiv.innerHTML += new Date().toLocaleTimeString() + ' - ' + message + '\n';
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(message);
+        }
+
+        function updateStatus(status) {
+            document.getElementById('status').textContent = '状态：' + status;
+        }
+
+        function testBasicClick() {
+            log('✅ 基本点击测试成功！按钮可以正常响应。');
+            updateStatus('基本点击正常');
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        async function testUserMedia() {
+            log('🎤 开始测试麦克风权限...');
+            updateStatus('测试麦克风权限中...');
+            
+            try {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('浏览器不支持 getUserMedia');
+                }
+                
+                log('🎤 浏览器支持 getUserMedia');
+                
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                log('✅ 麦克风权限获取成功！');
+                log('🎤 音频轨道数量: ' + stream.getAudioTracks().length);
+                
+                const audioTrack = stream.getAudioTracks()[0];
+                if (audioTrack) {
+                    log('🎤 音频轨道标签: ' + audioTrack.label);
+                    log('🎤 音频轨道设置: ' + JSON.stringify(audioTrack.getSettings()));
+                }
+                
+                // 停止流
+                stream.getTracks().forEach(track => track.stop());
+                updateStatus('麦克风权限测试成功');
+                
+            } catch (error) {
+                log('❌ 麦克风权限测试失败: ' + error.message);
+                if (error.name) {
+                    log('❌ 错误类型: ' + error.name);
+                }
+                updateStatus('麦克风权限测试失败');
+            }
+        }
+
+        async function testAudioContext() {
+            log('🔊 开始测试 AudioContext...');
+            updateStatus('测试 AudioContext 中...');
+            
+            try {
+                const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+                if (!AudioContextClass) {
+                    throw new Error('浏览器不支持 AudioContext');
+                }
+                
+                const audioContext = new AudioContextClass();
+                log('✅ AudioContext 创建成功！');
+                log('🔊 AudioContext 状态: ' + audioContext.state);
+                log('🔊 采样率: ' + audioContext.sampleRate);
+                
+                if (audioContext.state === 'suspended') {
+                    log('🔊 尝试恢复 AudioContext...');
+                    await audioContext.resume();
+                    log('✅ AudioContext 恢复成功，新状态: ' + audioContext.state);
+                }
+                
+                // 关闭 AudioContext
+                await audioContext.close();
+                updateStatus('AudioContext 测试成功');
+                
+            } catch (error) {
+                log('❌ AudioContext 测试失败: ' + error.message);
+                updateStatus('AudioContext 测试失败');
+            }
+        }
+
+        // 页面加载时的初始信息
+        window.onload = function() {
+            log('📱 浏览器信息: ' + navigator.userAgent);
+            log('🔒 协议: ' + location.protocol);
+            log('🌐 域名: ' + location.hostname);
+            log('📍 完整 URL: ' + location.href);
+            
+            if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+                log('⚠️ 注意：非 HTTPS 或非 localhost 环境可能限制麦克风访问');
+            }
+        };
+    </script>
+</body>
+</html>
