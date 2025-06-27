@@ -116,12 +116,13 @@ export default function WaveformTrack({
     canvas.width = rect.width * dpr
     canvas.height = rect.height * dpr
     ctx.scale(dpr, dpr)
-    const centerY = height / 2
+    // 使用渲染后 CSS 尺寸
+    const centerY = rect.height / 2
     // 清空背景
-    ctx.clearRect(0, 0, width, height)
-    // envelope fill
-    const amp = height * 0.8
-    const endX = isRecording ? lastRecordedXRef.current : Math.floor((currentTime / duration) * width)
+    ctx.clearRect(0, 0, rect.width, rect.height)
+    // envelope fill: use half height so waveform spans full track
+    const amp = rect.height / 2
+    const endX = isRecording ? lastRecordedXRef.current : Math.floor((currentTime / duration) * rect.width)
     ctx.beginPath()
     // 上包络(max)
     ctx.moveTo(0, centerY - (maxDataRef.current[0] || 0) * amp)
@@ -139,9 +140,9 @@ export default function WaveformTrack({
     ctx.lineWidth = 1
     ctx.stroke()
     // 绘制播放头
-    const playX = isRecording ? lastRecordedXRef.current : Math.floor((currentTime / duration) * width)
+    const playX = isRecording ? lastRecordedXRef.current : Math.floor((currentTime / duration) * rect.width)
     ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2
-    ctx.beginPath(); ctx.moveTo(playX, 0); ctx.lineTo(playX, height); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(playX, 0); ctx.lineTo(playX, rect.height); ctx.stroke()
   }
 
   return (

@@ -66,7 +66,7 @@ export default function TrackContent({
           currentTime={currentTime}
           duration={duration}
           width={containerWidth}
-          height={height - 10} // 留一点边距
+          height={height} // 填满整个轨道高度
         />
       </div>
       
