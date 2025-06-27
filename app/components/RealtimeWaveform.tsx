@@ -2,275 +2,172 @@
 
 import { useEffect, useRef } from 'react'
 
-interface RealTimeWaveformProps {
+interface Props {
   isRecording: boolean
   isArmed: boolean
-  trackId: string
   width: number
   height: number
-  currentTime: number
-  duration: number
+  currentTime: number   // 全局播放头时间（秒）
+  duration: number      // 预计录音总时长（秒）
 }
 
-export default function RealTimeWaveform({
+export default function RealTimeWaveform ({
   isRecording,
   isArmed,
-  trackId,
   width,
   height,
   currentTime,
   duration
-}: RealTimeWaveformProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const audioContextRef = useRef<AudioContext | null>(null)
-  const analyserRef = useRef<AnalyserNode | null>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-  const animationIdRef = useRef<number | null>(null)
-  
-  // 存储波形数据 - 像素级存储
-  const waveformDataRef = useRef<number[]>([])
-  // 存储波形数据 - 每像素最小值和最大值
-  const minDataRef = useRef<number[]>([])
-  const maxDataRef = useRef<number[]>([])
-  const lastRecordedXRef = useRef<number>(-1)
-  const lastTimeRef = useRef<number>(0)
+}: Props) {
+  const canvasRef       = useRef<HTMLCanvasElement | null>(null)
+  const ctxRef          = useRef<CanvasRenderingContext2D | null>(null)
 
+  const audioCtxRef     = useRef<AudioContext | null>(null)
+  const streamRef       = useRef<MediaStream | null>(null)
+  const workletRef      = useRef<AudioWorkletNode | null>(null)
+
+  /** 每个像素位置的 min / max（-1 → 1） */
+  const minArrRef = useRef<Float32Array>(new Float32Array(width).fill(0))
+  const maxArrRef = useRef<Float32Array>(new Float32Array(width).fill(0))
+  const lastXRef  = useRef<number>(-1)
+
+  /* ---------- 录音开关 ---------- */
   useEffect(() => {
     if (isRecording && isArmed) {
-      startRecording()
+      initAudio().catch(console.error)
     } else {
-      stopRecording()
+      cleanup()
     }
-
-    return () => stopRecording()
+    return cleanup
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRecording, isArmed])
 
-  // 当录音状态改变时重置数据
+  /* ---------- 大小变化时重新分配数组 ---------- */
   useEffect(() => {
-    if (isRecording && isArmed) {
-      // 录音开始时清空之前的数据
-      minDataRef.current = new Array(width).fill(0)
-      maxDataRef.current = new Array(width).fill(0)
-      lastRecordedXRef.current = -1
-      console.log('🔴 Recording started - data reset')
-    }
-  }, [isRecording, isArmed, width])
-
-  const startRecording = async () => {
-    console.log('🎤 Starting real-time waveform recording...')
-    
-    try {
-      // 获取麦克风权限
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          sampleRate: 44100
-        }
-      })
-      
-      streamRef.current = stream
-      
-      // 创建音频上下文
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
-      
-      // 创建分析器
-      analyserRef.current = audioContextRef.current.createAnalyser()
-      analyserRef.current.fftSize = 2048  // 适中的FFT size
-      analyserRef.current.smoothingTimeConstant = 0.1  // 轻微的平滑处理
-      
-      // 连接音频源
-      const source = audioContextRef.current.createMediaStreamSource(stream)
-      source.connect(analyserRef.current)
-      
-      // 清空之前的数据
-      waveformDataRef.current = new Array(width).fill(0)
-      lastRecordedXRef.current = -1
-      
-      console.log('✅ Audio setup complete, starting DAW-style visualization...')
-      console.log(`📊 FFT Size: ${analyserRef.current.fftSize}, Buffer Length: ${analyserRef.current.frequencyBinCount}`)
-      
-      // 开始绘制循环
-      draw()
-      
-    } catch (error) {
-      console.error('❌ Error accessing microphone:', error)
-      // 如果麦克风访问失败，启动测试模式
-      startTestMode()
-    }
-  }
-
-  const stopRecording = () => {
-    if (animationIdRef.current) {
-      cancelAnimationFrame(animationIdRef.current)
-      animationIdRef.current = null
-    }
-    
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop())
-      streamRef.current = null
-    }
-    
-    if (audioContextRef.current) {
-      audioContextRef.current.close()
-      audioContextRef.current = null
-    }
-  }
-
-  const startTestMode = () => {
-    console.log('🧪 Starting test mode...')
-    waveformDataRef.current = new Array(width).fill(0)
-    lastRecordedXRef.current = -1
-    drawTestMode()
-  }
-
-  const drawTestMode = () => {
-    if (!isRecording || !isArmed) return
-    
-    const playheadX = Math.floor((currentTime / duration) * width)
-    
-    // 在播放头当前位置生成测试波形数据
-    if (playheadX >= 0 && playheadX < width) {
-      // 生成复合测试波形（模拟真实DAW录音）
-      const time = currentTime
-      const fundamental = 0.4 * Math.sin(2 * Math.PI * 220 * time)  // 220Hz 基频
-      const harmonic1 = 0.2 * Math.sin(2 * Math.PI * 440 * time)    // 440Hz 二次谐波
-      const harmonic2 = 0.1 * Math.sin(2 * Math.PI * 880 * time)    // 880Hz 三次谐波
-      const noise = (Math.random() - 0.5) * 0.1  // 噪声成分
-      
-      // 添加音量包络（模拟自然衰减）
-      const envelope = Math.max(0.1, 1 - (time % 4) * 0.2)  // 每4秒一个循环
-      
-      const waveValue = (fundamental + harmonic1 + harmonic2 + noise) * envelope
-      waveformDataRef.current[playheadX] = Math.max(-1, Math.min(1, waveValue))
-      
-      // 增加波形密度，在相邻像素也填充数据
-      const density = 3  // 每个时间点填充3个像素
-      for (let i = 1; i < density && playheadX + i < width; i++) {
-        const variation = (Math.random() - 0.5) * 0.3
-        waveformDataRef.current[playheadX + i] = Math.max(-1, Math.min(1, waveValue * 0.8 + variation))
-      }
-      
-      console.log(`🧪 DAW Test wave at ${playheadX}: ${waveValue.toFixed(3)}, envelope: ${envelope.toFixed(2)}`)
-    }
-    
-    renderWaveform()
-    
-    if (isRecording && isArmed) {
-      animationIdRef.current = requestAnimationFrame(drawTestMode)
-    }
-  }
-
-  const draw = () => {
-    if (!analyserRef.current || !isRecording || !isArmed) return
-    // 获取时域音频数据
-    const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount)
-    analyserRef.current.getByteTimeDomainData(dataArray)
-    const playheadX = Math.floor((currentTime / duration) * width)
-    // 计算本帧最小/最大值
-    let minSample = 1
-    let maxSample = -1
-    for (let i = 0; i < dataArray.length; i++) {
-      const sample = (dataArray[i] - 128) / 128
-      minSample = Math.min(minSample, sample)
-      maxSample = Math.max(maxSample, sample)
-    }
-    // 记录到对应像素
-    if (playheadX >= 0 && playheadX < width) {
-      minDataRef.current[playheadX] = minSample
-      maxDataRef.current[playheadX] = maxSample
-      lastRecordedXRef.current = playheadX
-    }
-    renderWaveform()
-    if (isRecording && isArmed) {
-      animationIdRef.current = requestAnimationFrame(draw)
-    }
-  }
-
-  const renderWaveform = () => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    
-    canvas.width = width
-    canvas.height = height
-    
-    // 清空画布 - 深色背景
-    ctx.fillStyle = '#1a1a1a'
-    ctx.fillRect(0, 0, width, height)
-    
-    // 绘制中心线
-    const centerY = height / 2
-    ctx.strokeStyle = '#333333'
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.moveTo(0, centerY)
-    ctx.lineTo(width, centerY)
-    ctx.stroke()
-    
-    // 计算播放头位置
-    const playheadX = (currentTime / duration) * width
-    
-    // 绘制已录制的波形（橙色，类似Amped Studio）
-    ctx.strokeStyle = '#ff8c00'
-    ctx.lineWidth = 1
-    for (let x = 0; x < Math.min(width, Math.floor((currentTime / duration) * width)); x++) {
-      const minSample = minDataRef.current[x] || 0
-      const maxSample = maxDataRef.current[x] || 0
-      const yMin = centerY - (minSample * height * 0.4)
-      const yMax = centerY - (maxSample * height * 0.4)
-      ctx.beginPath()
-      ctx.moveTo(x, yMin)
-      ctx.lineTo(x, yMax)
-      ctx.stroke()
-    }
-    
-    // 绘制播放头（白色竖线，类似Amped Studio）
-    ctx.strokeStyle = '#ffffff'
-    ctx.lineWidth = 2
-    ctx.beginPath()
-    ctx.moveTo(playheadX, 0)
-    ctx.lineTo(playheadX, height)
-    ctx.stroke()
-    
-    // 绘制录音指示器
-    if (isRecording && isArmed) {
-      ctx.fillStyle = '#ff0000'
-      ctx.beginPath()
-      ctx.arc(playheadX, centerY, 2, 0, 2 * Math.PI)
-      ctx.fill()
-    }
-    
-    // 显示状态信息
-    ctx.fillStyle = '#888888'
-    ctx.font = '10px Arial'
-    ctx.fillText(`${isRecording ? 'REC' : 'STOP'} | ${Math.floor(playheadX)}/${width}px`, 5, 15)
-  }
-
-  useEffect(() => {
-    if (waveformDataRef.current.length !== width) {
-      waveformDataRef.current = new Array(width).fill(0)
-    }
-    renderWaveform()
+    minArrRef.current = new Float32Array(width).fill(0)
+    maxArrRef.current = new Float32Array(width).fill(0)
+    draw()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [width, height])
 
-  useEffect(() => {
-    if (!isRecording) {
-      renderWaveform()
-    }
-  }, [currentTime])
+  /* ---------- 停止录音后，依旧根据 currentTime 重绘播放头 ---------- */
+  useEffect(draw, [currentTime]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{ 
-        width: `${width}px`, 
-        height: `${height}px`,
-        display: 'block'
-      }}
-    />
-  )
+  /* ---------- 初始化 Audio & Worklet ---------- */
+  async function initAudio () {
+    if (audioCtxRef.current) return                       // 已在录
+
+    // 1. 麦克风流
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    streamRef.current = stream
+
+    // 2. AudioContext
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+    await ctx.resume()
+    audioCtxRef.current = ctx
+
+    // 3. Worklet
+    await ctx.audioWorklet.addModule('/waveform-processor.js')
+    const worklet = new AudioWorkletNode(ctx, 'waveform-processor')
+    worklet.port.onmessage = (ev) => {
+      const { time, min, max } = ev.data as { time: number; min: number; max: number }
+      updateWaveform(time, min, max)
+    }
+    workletRef.current = worklet
+
+    // 4. 连接节点
+    const src = ctx.createMediaStreamSource(stream)
+    const mute = ctx.createGain()
+    mute.gain.value = 0                                   // 静音，避免回放
+    src.connect(worklet).connect(mute).connect(ctx.destination)
+
+    console.log('🎙  audio worklet started')
+  }
+
+  /* ---------- 更新波形数组 ---------- */
+  function updateWaveform (time: number, min: number, max: number) {
+    if (!duration) return
+    const x = Math.floor((time / duration) * width)
+    if (x < 0 || x >= width) return
+
+    minArrRef.current[x] = Math.min(minArrRef.current[x] || 0, min)
+    maxArrRef.current[x] = Math.max(maxArrRef.current[x] || 0, max)
+    lastXRef.current = Math.max(lastXRef.current, x)
+
+    draw()
+  }
+
+  /* ---------- 绘制 ---------- */
+  function draw () {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    // Hi‑DPI 处理
+    const dpr = window.devicePixelRatio || 1
+    canvas.width  = width  * dpr
+    canvas.height = height * dpr
+    canvas.style.width  = `${width}px`
+    canvas.style.height = `${height}px`
+
+    let ctx = ctxRef.current
+    if (!ctx) {
+      ctx = canvas.getContext('2d')!
+      ctxRef.current = ctx
+    }
+    ctx.save()
+    ctx.scale(dpr, dpr)
+
+    // 背景
+    ctx.clearRect(0, 0, width, height)
+
+    const minArr = minArrRef.current
+    const maxArr = maxArrRef.current
+    const lastX  = lastXRef.current
+    if (lastX < 1) {                        // 暂无有效数据
+      ctx.restore()
+      return
+    }
+
+    const midY = height / 2
+    const amp  = height * 0.48              // 缩放系数
+
+    /* ---- 填充包络带 ---- */
+    ctx.beginPath()
+    ctx.moveTo(0, midY - (maxArr[0] ?? 0) * amp)
+    for (let x = 1; x <= lastX; x++) {
+      ctx.lineTo(x, midY - (maxArr[x] ?? 0) * amp)
+    }
+    for (let x = lastX; x >= 0; x--) {
+      ctx.lineTo(x, midY - (minArr[x] ?? 0) * amp)
+    }
+    ctx.closePath()
+    ctx.fillStyle = '#3fa0ff'
+    ctx.fill()
+
+    /* ---- 播放头 —— 红线 ---- */
+    const playX = Math.floor((currentTime / duration) * width)
+    ctx.strokeStyle = '#ff4d4f'
+    ctx.lineWidth   = 1 / dpr
+    ctx.beginPath()
+    ctx.moveTo(playX + 0.5, 0)
+    ctx.lineTo(playX + 0.5, height)
+    ctx.stroke()
+
+    ctx.restore()
+  }
+
+  /* ---------- 清理资源 ---------- */
+  function cleanup () {
+    workletRef.current?.disconnect()
+    workletRef.current?.port.close()
+    workletRef.current = null
+
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    streamRef.current = null
+
+    audioCtxRef.current?.close()
+    audioCtxRef.current = null
+  }
+
+  return <canvas ref={canvasRef} />
 }

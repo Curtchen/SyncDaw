@@ -110,40 +110,38 @@ export default function WaveformTrack({
   const drawWaveform = () => {
     const canvas = canvasRef.current; if (!canvas) return
     const ctx = canvas.getContext('2d'); if (!ctx) return
-    canvas.width = width
-    canvas.height = height
+    // 高DPI 画布设置
+    const dpr = window.devicePixelRatio || 1
+    const rect = canvas.getBoundingClientRect()
+    canvas.width = rect.width * dpr
+    canvas.height = rect.height * dpr
+    ctx.scale(dpr, dpr)
     const centerY = height / 2
-
-    // background
-    ctx.fillStyle = '#1a1a1a'
-    ctx.fillRect(0, 0, width, height)
-    // 绘制已录制的波形（像素最小/最大值）
-    const amplitudeScale = height * 0.8  // 增加高度占比，更明显
-    ctx.strokeStyle = '#3b82f6'
-    ctx.lineWidth = 2  // 加粗线条
-    ctx.globalAlpha = 0.8  // 降低透明度，波形更清晰
-    // 根据状态选择绘制范围：录制时到 lastRecordedX，否则到当前时间的像素
+    // 清空背景
+    ctx.clearRect(0, 0, width, height)
+    // envelope fill
+    const amp = height * 0.8
     const endX = isRecording ? lastRecordedXRef.current : Math.floor((currentTime / duration) * width)
-    for (let x = 0; x <= endX; x++) {
-      const yMin = centerY - (minDataRef.current[x] || 0) * amplitudeScale
-      const yMax = centerY - (maxDataRef.current[x] || 0) * amplitudeScale
-      ctx.beginPath()
-      ctx.moveTo(x, yMin)
-      ctx.lineTo(x, yMax)
-      ctx.stroke()
+    ctx.beginPath()
+    // 上包络(max)
+    ctx.moveTo(0, centerY - (maxDataRef.current[0] || 0) * amp)
+    for (let x = 1; x <= endX; x++) {
+      ctx.lineTo(x, centerY - (maxDataRef.current[x] || 0) * amp)
     }
-    ctx.globalAlpha = 1.0  // 恢复不透明度
-    // draw playhead / indicator
+    // 下包络(min) 倒序
+    for (let x = endX; x >= 0; x--) {
+      ctx.lineTo(x, centerY - (minDataRef.current[x] || 0) * amp)
+    }
+    ctx.closePath()
+    ctx.fillStyle = 'rgba(59,130,246,0.6)'  // 半透明填充
+    ctx.fill()
+    ctx.strokeStyle = '#3b82f6'
+    ctx.lineWidth = 1
+    ctx.stroke()
+    // 绘制播放头
     const playX = isRecording ? lastRecordedXRef.current : Math.floor((currentTime / duration) * width)
     ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2
     ctx.beginPath(); ctx.moveTo(playX, 0); ctx.lineTo(playX, height); ctx.stroke()
-    if (isRecording) {
-      ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.arc(playX, centerY, 2, 0, 2 * Math.PI); ctx.fill()
-    }
-    // optional status
-    ctx.fillStyle = '#888888'
-    ctx.font = '10px Arial'
-    ctx.fillText(`${isRecording ? 'REC' : ''}`, 5, 12)
   }
 
   return (
