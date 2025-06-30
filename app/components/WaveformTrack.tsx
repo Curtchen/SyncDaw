@@ -22,7 +22,7 @@ export default function WaveformTrack({
   duration,
   width,
   height,
-  amplitudeScale = 0.8  // 默认80%灵敏度
+  amplitudeScale = 1    // 默认100%灵敏度
 }: WaveformTrackProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationRef = useRef<number>()
@@ -68,7 +68,7 @@ export default function WaveformTrack({
       analyserRef.current = audioContextRef.current.createAnalyser()
       microphoneRef.current = audioContextRef.current.createMediaStreamSource(stream)
       analyserRef.current.fftSize = 2048
-      analyserRef.current.smoothingTimeConstant = 0.8
+      analyserRef.current.smoothingTimeConstant = 0.2
       microphoneRef.current.connect(analyserRef.current)
       // start capturing per-pixel min/max
       captureAudio()
@@ -140,7 +140,7 @@ export default function WaveformTrack({
     ctx.fillStyle = 'rgba(59,130,246,0.6)'  // 半透明填充
     ctx.fill()
     ctx.strokeStyle = '#3b82f6'
-    ctx.lineWidth = 1
+    ctx.lineWidth = 0.5
     ctx.stroke()
     // 绘制播放头
     const playX = isRecording ? lastRecordedXRef.current : Math.floor((currentTime / duration) * rect.width)
