@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 
+// 在props接口中添加可选的幅度缩放参数
 interface WaveformTrackProps {
   isRecording: boolean
   isArmed: boolean
@@ -10,6 +11,7 @@ interface WaveformTrackProps {
   currentTime: number
   height: number
   width: number
+  amplitudeScale?: number  // 波形幅度缩放，0-1之间
 }
 
 export default function WaveformTrack({ 
@@ -19,7 +21,8 @@ export default function WaveformTrack({
   currentTime,
   duration,
   width,
-  height 
+  height,
+  amplitudeScale = 0.8  // 默认80%灵敏度
 }: WaveformTrackProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationRef = useRef<number>()
@@ -121,7 +124,7 @@ export default function WaveformTrack({
     // 清空背景
     ctx.clearRect(0, 0, rect.width, rect.height)
     // envelope fill: use half height so waveform spans full track
-    const amp = rect.height / 2
+    const amp = (rect.height / 2) * amplitudeScale;
     const endX = isRecording ? lastRecordedXRef.current : Math.floor((currentTime / duration) * rect.width)
     ctx.beginPath()
     // 上包络(max)
