@@ -67,6 +67,25 @@ export class AudioEngine {
     }
   }
 
+  getMaxTrackDuration(): number {
+    let maxDuration = 0
+    this.tracks.forEach(track => {
+      const trackDuration = track.duration
+      if (trackDuration > maxDuration) {
+        maxDuration = trackDuration
+      }
+    })
+    return maxDuration
+  }
+
+  getAllTrackDurations(): { [trackId: string]: number } {
+    const durations: { [trackId: string]: number } = {}
+    this.tracks.forEach((track, id) => {
+      durations[id] = track.duration
+    })
+    return durations
+  }
+
   dispose() {
     this.tracks.forEach(track => track.dispose())
     this.tracks.clear()

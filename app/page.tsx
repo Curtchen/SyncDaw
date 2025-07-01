@@ -10,7 +10,7 @@ import { Track } from './types/track'
 import { useTransport } from './state/transport'
 
 export default function DAWInterface() {
-  const { isInitialized, masterVolume, createTrack, getTrack, removeTrack: removeAudioTrack, setMasterVolume } = useAudioEngine()
+  const { isInitialized, masterVolume, createTrack, getTrack, removeTrack: removeAudioTrack, setMasterVolume, getMaxTrackDuration, getAllTrackDurations } = useAudioEngine()
   
   // Project settings
   const [projectName, setProjectName] = useState('Untitled')
@@ -143,6 +143,17 @@ export default function DAWInterface() {
         })
         setIsRecording(false)
         console.log(`⏹️ Recording stopped globally`)
+        
+        // Update project duration to match longest track
+        setTimeout(() => {
+          const maxDuration = getMaxTrackDuration()
+          if (maxDuration > 0) {
+            const newDuration = Math.max(maxDuration + 5, 30) // Add 5 seconds padding, minimum 30s
+            setDuration(newDuration)
+            console.log(`📏 Updated project duration to ${newDuration}s (max track: ${maxDuration}s)`)
+          }
+        }, 100) // Small delay to ensure audio processing is complete
+        
         // pause transport to keep currentTime where recording stopped
         transportPause()
       } else {
@@ -300,7 +311,8 @@ export default function DAWInterface() {
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
     const secs = Math.floor(seconds % 60)
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+    const milliseconds = Math.floor((seconds % 1) * 1000)
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}:${milliseconds.toString().padStart(3, '0')}`
   }
 
   // 优化轨道组件渲染 - 条件渲染防止hydration错误
@@ -341,13 +353,19 @@ export default function DAWInterface() {
     ))
   }, [isClient, tracks, duration, isPlaying, isRecording, currentTime, updateTrack])
 
-  // auto pause when end reached is disabled until clip re-enabled
+  // Auto pause when playback reaches the end of the longest recorded track
   useEffect(() => {
     if (!isPlaying) return
-    if (!isLoopEnabled && currentTime >= duration) {
+    
+    // Get the current max track duration
+    const maxTrackDuration = getMaxTrackDuration()
+    const effectiveDuration = maxTrackDuration > 0 ? maxTrackDuration : duration
+    
+    if (!isLoopEnabled && currentTime >= effectiveDuration) {
       transportPause()
+      console.log(`⏸️ Auto-paused at end of longest track (${effectiveDuration}s)`)
     }
-  }, [isPlaying, currentTime, duration, isLoopEnabled, transportPause])
+  }, [isPlaying, currentTime, duration, isLoopEnabled, transportPause, getMaxTrackDuration])
 
   return (
     <div className="h-screen bg-slate-900 text-white flex flex-col">
@@ -526,11 +544,16 @@ export default function DAWInterface() {
             </div>
             <span className="text-slate-500 text-sm">/</span>
             <div className="bg-black px-3 py-1 rounded font-mono text-slate-400 text-sm min-w-24 text-center">
-              {formatTime(duration)}
+              {formatTime(Math.max(getMaxTrackDuration(), duration))}
             </div>
             <div className="text-slate-400 text-sm ml-2">
               {isRecording ? 'REC' : isPlaying ? 'PLAY' : 'STOP'}
               {isRecordingAutomation && ' AUTO'}
+              {(getMaxTrackDuration() > 0 || isRecording) && (
+                <div className="text-xs text-green-400 mt-0.5">
+                  {isRecording ? `Recording: ${formatTime(currentTime)}` : `Track: ${formatTime(getMaxTrackDuration())}`}
+                </div>
+              )}
             </div>
           </div>
 
@@ -693,6 +716,7 @@ export default function DAWInterface() {
             loopEnd={loopEnd}
             trackCount={tracks.length}
             isRecording={isRecording}
+            maxTrackDuration={getMaxTrackDuration()}
           />
           
           {/* Track Content Area */}

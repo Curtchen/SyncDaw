@@ -76,6 +76,14 @@ export function useAudioEngine() {
     engineRef.current?.setMasterVolume(volume)
   }
 
+  const getMaxTrackDuration = (): number => {
+    return engineRef.current?.getMaxTrackDuration() || 0
+  }
+
+  const getAllTrackDurations = (): { [trackId: string]: number } => {
+    return engineRef.current?.getAllTrackDurations() || {}
+  }
+
   return {
     isInitialized,
     masterVolume,
@@ -83,6 +91,8 @@ export function useAudioEngine() {
     getTrack,
     removeTrack,
     setMasterVolume: updateMasterVolume,
+    getMaxTrackDuration,
+    getAllTrackDurations,
     audioEngine: engineRef.current
   }
 }

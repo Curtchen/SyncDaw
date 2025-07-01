@@ -11,6 +11,7 @@ interface SharedTimelineProps {
   loopEnd?: number
   trackCount?: number
   isRecording?: boolean
+  maxTrackDuration?: number
 }
 
 export default function SharedTimeline({ 
@@ -21,30 +22,45 @@ export default function SharedTimeline({
   loopStart = 0, 
   loopEnd = 16,
   trackCount = 0,
-  isRecording = false
+  isRecording = false,
+  maxTrackDuration = 0
 }: SharedTimelineProps) {
   const timelineRef = useRef<HTMLDivElement>(null)
 
+  // Use effective duration for timeline calculations
+  // If we have recorded tracks, use max track duration + some padding
+  // If no recorded tracks yet, use a smaller timeline for better precision during recording
+  const hasRecordings = (maxTrackDuration || 0) > 0
+  const effectiveDuration = hasRecordings 
+    ? Math.max(maxTrackDuration || 0, duration)
+    : Math.max(currentTime + 10, 10) // Show at least 10 seconds ahead of current time
+  
+  // Debug: log values to help troubleshoot
+  if (currentTime > 0) {
+    console.log(`📍 Timeline: currentTime=${currentTime}, duration=${duration}, maxTrackDuration=${maxTrackDuration}, effectiveDuration=${effectiveDuration}, hasRecordings=${hasRecordings}, playheadPos=${(currentTime / effectiveDuration * 100).toFixed(2)}%`)
+  }
+  
   const handleTimelineClick = useCallback((e: React.MouseEvent) => {
     if (timelineRef.current) {
       const rect = timelineRef.current.getBoundingClientRect()
       const x = e.clientX - rect.left
       const percentage = x / rect.width
-      const newTime = Math.max(0, Math.min(duration, percentage * duration))
+      const newTime = Math.max(0, Math.min(effectiveDuration, percentage * effectiveDuration))
       onTimeChange(newTime)
     }
-  }, [duration, onTimeChange])
+  }, [effectiveDuration, onTimeChange])
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
     const secs = Math.floor(seconds % 60)
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+    const milliseconds = Math.floor((seconds % 1) * 1000)
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}:${milliseconds.toString().padStart(3, '0')}`
   }
 
-  // Generate time markers - adjust interval based on duration
+  // Generate time markers - adjust interval based on duration for precise timing
   const markers = []
-  const interval = duration <= 30 ? 2 : 5 // 2 second intervals for shorter durations
-  for (let i = 0; i <= duration; i += interval) {
+  const interval = effectiveDuration <= 10 ? 1 : effectiveDuration <= 30 ? 2 : 5 // More granular for short durations
+  for (let i = 0; i <= effectiveDuration; i += interval) {
     markers.push(i)
   }
 
@@ -63,7 +79,7 @@ export default function SharedTimeline({
               key={time}
               className="flex-none relative"
               style={{ 
-                left: `${(time / duration) * 100}%`,
+                left: `${(time / effectiveDuration) * 100}%`,
                 width: '1px'
               }}
             >
@@ -82,8 +98,8 @@ export default function SharedTimeline({
             <div
               className="absolute top-0 bottom-0 bg-yellow-500 bg-opacity-10 border-l-2 border-r-2 border-yellow-500 pointer-events-none"
               style={{
-                left: `${(loopStart / duration) * 100}%`,
-                width: `${((loopEnd - loopStart) / duration) * 100}%`
+                left: `${(loopStart / effectiveDuration) * 100}%`,
+                width: `${((loopEnd - loopStart) / effectiveDuration) * 100}%`
               }}
             />
             
@@ -91,7 +107,7 @@ export default function SharedTimeline({
             <div
               className="absolute top-0 bottom-0 w-1 bg-yellow-500 pointer-events-none z-20"
               style={{
-                left: `${(loopStart / duration) * 100}%`
+                left: `${(loopStart / effectiveDuration) * 100}%`
               }}
             >
               <div className="absolute -top-1 left-0 w-0 h-0 border-l-2 border-r-2 border-b-2 border-transparent border-b-yellow-500"></div>
@@ -100,7 +116,7 @@ export default function SharedTimeline({
             <div
               className="absolute top-0 bottom-0 w-1 bg-yellow-500 pointer-events-none z-20"
               style={{
-                left: `${(loopEnd / duration) * 100}%`
+                left: `${(loopEnd / effectiveDuration) * 100}%`
               }}
             >
               <div className="absolute -top-1 right-0 w-0 h-0 border-l-2 border-r-2 border-b-2 border-transparent border-b-yellow-500"></div>
@@ -114,7 +130,7 @@ export default function SharedTimeline({
             isRecording ? 'w-1 bg-red-600' : 'w-0.5 bg-red-500'
           }`}
           style={{
-            left: `${(currentTime / duration) * 100}%`,
+            left: `${(currentTime / effectiveDuration) * 100}%`,
             top: 0,
             height: trackCount > 0 ? `${40 + trackCount * 108}px` : '40px' // 40px for timeline + 108px per track
           }}
