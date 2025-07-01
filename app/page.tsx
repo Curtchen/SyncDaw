@@ -356,16 +356,21 @@ export default function DAWInterface() {
   // Auto pause when playback reaches the end of the longest recorded track
   useEffect(() => {
     if (!isPlaying) return
-    
+
+    // 录音过程中不要触发自动暂停，否则会中断录音
+    if (isRecording) return
+
     // Get the current max track duration
     const maxTrackDuration = getMaxTrackDuration()
     const effectiveDuration = maxTrackDuration > 0 ? maxTrackDuration : duration
-    
+
     if (!isLoopEnabled && currentTime >= effectiveDuration) {
+      // 将播放头固定在最长轨道时长处，再暂停
+      seekTransport(effectiveDuration)
       transportPause()
-      console.log(`⏸️ Auto-paused at end of longest track (${effectiveDuration}s)`)
+      console.log(`⏸️ Auto-paused at end of longest track (${effectiveDuration}s)`) 
     }
-  }, [isPlaying, currentTime, duration, isLoopEnabled, transportPause, getMaxTrackDuration])
+  }, [isPlaying, isRecording, currentTime, duration, isLoopEnabled, transportPause, getMaxTrackDuration, seekTransport])
 
   return (
     <div className="h-screen bg-slate-900 text-white flex flex-col">

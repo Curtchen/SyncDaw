@@ -10,6 +10,10 @@ export class AudioEngine {
   private masterGain: GainNode | null = null
   private tracks: Map<string, AudioTrack> = new Map()
   private isInitialized = false
+  // Metronome related nodes/state
+  private metronomeGain: GainNode | null = null
+  private metronomeIntervalId: number | null = null
+  private isMetronomeOn = false
 
   async initialize() {
     if (this.isInitialized) return
@@ -27,6 +31,11 @@ export class AudioEngine {
 
       this.masterGain = this.audioContext.createGain()
       this.masterGain.connect(this.audioContext.destination)
+      
+      // Prepare metronome gain (default muted until enabled)
+      this.metronomeGain = this.audioContext.createGain()
+      this.metronomeGain.gain.value = 0 // start muted
+      this.metronomeGain.connect(this.masterGain)
       
       this.isInitialized = true
       console.log('✅ AudioEngine initialized successfully')
@@ -95,6 +104,84 @@ export class AudioEngine {
     }
     
     this.isInitialized = false
+
+    // Stop metronome if running
+    this.stopMetronome()
+  }
+
+  /* ===================== Metronome ===================== */
+
+  /**
+   * Start the metronome. Will schedule clicks aligned to the given bpm.
+   * @param bpm Beats per minute
+   * @param volume 0‒100
+   */
+  startMetronome(bpm: number, volume: number = 50) {
+    if (!this.audioContext || !this.metronomeGain) return
+
+    // Ensure any previous interval is cleared
+    this.stopMetronome()
+
+    this.isMetronomeOn = true
+    // set volume
+    this.setMetronomeVolume(volume)
+
+    const intervalMs = (60 / bpm) * 1000
+
+    // Play initial click immediately
+    this.playMetronomeClick()
+
+    this.metronomeIntervalId = window.setInterval(() => {
+      this.playMetronomeClick()
+    }, intervalMs)
+  }
+
+  /** Stop the metronome */
+  stopMetronome() {
+    if (this.metronomeIntervalId !== null) {
+      clearInterval(this.metronomeIntervalId)
+      this.metronomeIntervalId = null
+    }
+    this.isMetronomeOn = false
+    if (this.metronomeGain) {
+      this.metronomeGain.gain.value = 0
+    }
+  }
+
+  /** Toggle metronome on/off */
+  toggleMetronome(bpm: number, volume: number = 50) {
+    if (this.isMetronomeOn) {
+      this.stopMetronome()
+    } else {
+      this.startMetronome(bpm, volume)
+    }
+  }
+
+  /** Set metronome volume 0-100 */
+  setMetronomeVolume(volume: number) {
+    if (this.metronomeGain) {
+      this.metronomeGain.gain.value = Math.max(0, Math.min(volume, 100)) / 100
+    }
+  }
+
+  /** Play a single short click (2 ms ramp). */
+  private playMetronomeClick() {
+    if (!this.audioContext || !this.metronomeGain || !this.isMetronomeOn) return
+
+    const osc = this.audioContext.createOscillator()
+    const gain = this.audioContext.createGain()
+
+    osc.type = 'square'
+    osc.frequency.value = 1000
+
+    gain.gain.setValueAtTime(1, this.audioContext.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + 0.05)
+
+    osc.connect(gain)
+    gain.connect(this.metronomeGain)
+
+    osc.start()
+    osc.stop(this.audioContext.currentTime + 0.06)
   }
 }
 
@@ -111,6 +198,8 @@ export class AudioTrack {
   private isMuted = false
   private isSolo = false
   private recordStartTime: number = 0
+  private recordedDuration: number | null = null
+  private segmentStartPos: number = 0 // timeline position where current segment starts
 
   constructor(id: string, audioContext: AudioContext, destination: AudioNode) {
     this.id = id
@@ -125,6 +214,9 @@ export class AudioTrack {
 
   async startRecording() {
     if (this.isRecording) return
+
+    // mark segment start position for later merging
+    this.segmentStartPos = useTransport.getState().currentTime
 
     try {
       console.log(`🎤 Starting recording for track ${this.id}`)
@@ -165,7 +257,8 @@ export class AudioTrack {
         await this.loadAudioFromBlob(blob)
       }
 
-      this.recordStartTime = useTransport.getState().currentTime
+      // Use audioContext clock for precise timing
+      this.recordStartTime = this.audioContext.currentTime
       this.recorder.start(BrowserCompat.isEdge() ? 1000 : 100) // Edge needs larger chunks
       this.isRecording = true
       console.log(`✅ Recording started for track ${this.id}`)
@@ -177,6 +270,10 @@ export class AudioTrack {
 
   stopRecording() {
     if (this.recorder && this.isRecording) {
+      // Record exact duration at stop moment using transport time
+      const transportTime = useTransport.getState().currentTime
+      this.recordedDuration = transportTime
+      console.log(`⏹️ Track ${this.id} stopping recording at transport time: ${transportTime}s`)
       this.recorder.stop()
       this.isRecording = false
     }
@@ -185,10 +282,42 @@ export class AudioTrack {
   private async loadAudioFromBlob(blob: Blob) {
     try {
       const arrayBuffer = await blob.arrayBuffer()
-      this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer)
+      const newBuffer = await this.audioContext.decodeAudioData(arrayBuffer)
 
-      // Clip creation disabled temporarily
+      const existingBuffer = this.audioBuffer
 
+      if (existingBuffer) {
+        const sampleRate = existingBuffer.sampleRate
+        if (newBuffer.sampleRate !== sampleRate) {
+          console.warn('Sample rate mismatch, cannot append. Overwriting existing recording.')
+          this.audioBuffer = newBuffer
+        } else {
+          const offsetFrames = Math.round(this.segmentStartPos * sampleRate)
+          const totalFrames = Math.max(existingBuffer.length, offsetFrames + newBuffer.length)
+          const numChannels = Math.max(existingBuffer.numberOfChannels, newBuffer.numberOfChannels)
+
+          const output = this.audioContext.createBuffer(numChannels, totalFrames, sampleRate)
+
+          for (let ch = 0; ch < numChannels; ch++) {
+            const out = output.getChannelData(ch)
+            // copy existing
+            if (ch < existingBuffer.numberOfChannels) {
+              out.set(existingBuffer.getChannelData(ch))
+            }
+            // copy new segment at offset
+            if (ch < newBuffer.numberOfChannels) {
+              out.set(newBuffer.getChannelData(ch), offsetFrames)
+            }
+          }
+
+          this.audioBuffer = output
+        }
+      } else {
+        // first recording
+        this.audioBuffer = newBuffer
+      }
+      
+      console.log(`🎵 Track ${this.id} loaded audio blob, recorded duration: ${this.recordedDuration}s (from transport time)`)
     } catch (error) {
       console.error('Error loading audio:', error)
     }
@@ -202,6 +331,13 @@ export class AudioTrack {
     this.sourceNode = this.audioContext.createBufferSource()
     this.sourceNode.buffer = this.audioBuffer
     this.sourceNode.connect(this.trackGain)
+    
+    // If we have a recorded duration, stop at that exact time
+    if (this.recordedDuration != null) {
+      const stopTime = this.audioContext.currentTime + (this.recordedDuration - startTime)
+      this.sourceNode.stop(stopTime)
+    }
+    
     this.sourceNode.start(0, startTime)
   }
 
@@ -238,7 +374,10 @@ export class AudioTrack {
   }
 
   get duration(): number {
-    return this.audioBuffer ? this.audioBuffer.duration : 0
+    // Return recorded duration if available, otherwise audioBuffer duration
+    const result = this.recordedDuration != null ? this.recordedDuration : (this.audioBuffer ? this.audioBuffer.duration : 0)
+    console.log(`📏 Track ${this.id} duration: ${result}s (recorded: ${this.recordedDuration}, buffer: ${this.audioBuffer?.duration || 0})`)
+    return result
   }
 
   get recordingState(): boolean {

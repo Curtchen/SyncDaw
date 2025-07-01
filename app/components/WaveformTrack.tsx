@@ -47,8 +47,8 @@ export default function WaveformTrack({
       if (minDataRef.current.length !== width) {
         const oldMin = minDataRef.current
         const oldMax = maxDataRef.current
-        minDataRef.current = new Array(width).fill(0)
-        maxDataRef.current = new Array(width).fill(0)
+      minDataRef.current = new Array(width).fill(0)
+      maxDataRef.current = new Array(width).fill(0)
         // copy old data if exists
         for (let i = 0; i < Math.min(oldMin.length, width); i++) {
           minDataRef.current[i] = oldMin[i] || 0

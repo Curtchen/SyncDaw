@@ -28,18 +28,8 @@ export default function SharedTimeline({
   const timelineRef = useRef<HTMLDivElement>(null)
 
   // Use effective duration for timeline calculations
-  // If we have recorded tracks, use max track duration + some padding
-  // If no recorded tracks yet, use a smaller timeline for better precision during recording
-  const hasRecordings = (maxTrackDuration || 0) > 0
-  const effectiveDuration = hasRecordings 
-    ? Math.max(maxTrackDuration || 0, duration)
-    : Math.max(currentTime + 10, 10) // Show at least 10 seconds ahead of current time
-  
-  // Debug: log values to help troubleshoot
-  if (currentTime > 0) {
-    console.log(`📍 Timeline: currentTime=${currentTime}, duration=${duration}, maxTrackDuration=${maxTrackDuration}, effectiveDuration=${effectiveDuration}, hasRecordings=${hasRecordings}, playheadPos=${(currentTime / effectiveDuration * 100).toFixed(2)}%`)
-  }
-  
+  const effectiveDuration = Math.max(maxTrackDuration || 0, duration)
+
   const handleTimelineClick = useCallback((e: React.MouseEvent) => {
     if (timelineRef.current) {
       const rect = timelineRef.current.getBoundingClientRect()
