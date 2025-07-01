@@ -2,17 +2,7 @@
 
 import { Volume2, Circle, Headphones, X } from 'lucide-react'
 import { useCallback, memo } from 'react'
-
-interface Track {
-  id: string
-  name: string
-  volume: number
-  pan: number
-  muted: boolean
-  solo: boolean
-  armed: boolean
-  color: string
-}
+import { Track } from '../types/track'
 
 interface TrackViewProps {
   track: Track

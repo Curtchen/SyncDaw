@@ -36,13 +36,25 @@ export default function WaveformTrack({
   // per-pixel min/max data for waveform axis
   const minDataRef = useRef<number[]>([])
   const maxDataRef = useRef<number[]>([])
+  // keep latest props for non-reactive loops
+  const propsRef = useRef({ currentTime, duration, width })
+  propsRef.current = { currentTime, duration, width }
    
   useEffect(() => {
     // reset data and start/stop audio capture
     if (isRecording && isArmed) {
-      // initialize per-pixel storage
-      minDataRef.current = new Array(width).fill(0)
-      maxDataRef.current = new Array(width).fill(0)
+      // initialize per-pixel storage only if not already done or width changed
+      if (minDataRef.current.length !== width) {
+        const oldMin = minDataRef.current
+        const oldMax = maxDataRef.current
+        minDataRef.current = new Array(width).fill(0)
+        maxDataRef.current = new Array(width).fill(0)
+        // copy old data if exists
+        for (let i = 0; i < Math.min(oldMin.length, width); i++) {
+          minDataRef.current[i] = oldMin[i] || 0
+          maxDataRef.current[i] = oldMax[i] || 0
+        }
+      }
       startRecording()
     } else {
       stopRecording()
@@ -99,9 +111,9 @@ export default function WaveformTrack({
       maxSample = Math.max(maxSample, sample)
     }
     // 计算录音进度对应的像素
-    const elapsed = audioContextRef.current.currentTime - recordStartRef.current
-    const playheadX = Math.floor((elapsed / duration) * width)
-    if (playheadX >= 0 && playheadX < width) {
+    const { currentTime: curT, duration: dur, width: w } = propsRef.current
+    const playheadX = Math.floor((curT / dur) * w)
+    if (playheadX >= 0 && playheadX < w) {
       minDataRef.current[playheadX] = minSample
       maxDataRef.current[playheadX] = maxSample
       lastRecordedXRef.current = playheadX
@@ -125,7 +137,7 @@ export default function WaveformTrack({
     ctx.clearRect(0, 0, rect.width, rect.height)
     // envelope fill: use half height so waveform spans full track
     const amp = (rect.height / 2) * amplitudeScale;
-    const endX = isRecording ? lastRecordedXRef.current : Math.floor((currentTime / duration) * rect.width)
+    const endX = lastRecordedXRef.current
     ctx.beginPath()
     // 上包络(max)
     ctx.moveTo(0, centerY - (maxDataRef.current[0] || 0) * amp)
@@ -142,10 +154,6 @@ export default function WaveformTrack({
     ctx.strokeStyle = '#3b82f6'
     ctx.lineWidth = 0.5
     ctx.stroke()
-    // 绘制播放头
-    const playX = isRecording ? lastRecordedXRef.current : Math.floor((currentTime / duration) * rect.width)
-    ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2
-    ctx.beginPath(); ctx.moveTo(playX, 0); ctx.lineTo(playX, rect.height); ctx.stroke()
   }
 
   return (

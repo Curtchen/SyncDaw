@@ -2,17 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import WaveformTrack from './WaveformTrack'
-
-interface Track {
-  id: string
-  name: string
-  volume: number
-  pan: number
-  muted: boolean
-  solo: boolean
-  armed: boolean
-  color: string
-}
+import { Track } from '../types/track'
 
 interface TrackContentProps {
   track: Track

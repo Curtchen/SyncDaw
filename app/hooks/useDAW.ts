@@ -1,17 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-
-interface Track {
-  id: string
-  name: string
-  volume: number
-  pan: number
-  muted: boolean
-  solo: boolean
-  armed: boolean
-  color: string
-}
+import { Track } from '../types/track'
 
 interface DAWState {
   isPlaying: boolean
@@ -35,6 +25,7 @@ export function useDAW() {
       {
         id: '1',
         name: 'Track 1',
+        type: 'audio',
         volume: 80,
         pan: 0,
         muted: false,
@@ -75,6 +66,7 @@ export function useDAW() {
       const newTrack: Track = {
         id: (prev.tracks.length + 1).toString(),
         name: `Track ${prev.tracks.length + 1}`,
+        type: 'audio',
         volume: 80,
         pan: 0,
         muted: false,

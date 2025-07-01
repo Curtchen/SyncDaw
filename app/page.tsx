@@ -6,17 +6,8 @@ import TrackView from './components/TrackView'
 import TrackContent from './components/TrackContent'
 import SharedTimeline from './components/SharedTimeline'
 import { useAudioEngine } from './hooks/useAudioEngine'
-
-interface Track {
-  id: string
-  name: string
-  volume: number
-  pan: number
-  muted: boolean
-  solo: boolean
-  armed: boolean
-  color: string
-}
+import { Track } from './types/track'
+import { useTransport } from './state/transport'
 
 export default function DAWInterface() {
   const { isInitialized, masterVolume, createTrack, getTrack, removeTrack: removeAudioTrack, setMasterVolume } = useAudioEngine()
@@ -31,7 +22,7 @@ export default function DAWInterface() {
   // Client-side flag
   const [isClient, setIsClient] = useState(false)
   
-  const [isPlaying, setIsPlaying] = useState(false)
+  const { isPlaying, currentTime, play: transportPlay, pause: transportPause, togglePlay, stop: transportStop, seek: seekTransport } = useTransport()
   const [isRecording, setIsRecording] = useState(false)
   const [isRecordingAutomation, setIsRecordingAutomation] = useState(false)
   const [isLoopEnabled, setIsLoopEnabled] = useState(false)
@@ -42,13 +33,13 @@ export default function DAWInterface() {
   const [loopEnd, setLoopEnd] = useState(8)
   const [bpm, setBpm] = useState(120)
   const [timeSignature, setTimeSignature] = useState({ numerator: 4, denominator: 4 })
-  const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(30) // 30 seconds
 
   const [tracks, setTracks] = useState<Track[]>([
     {
       id: '1',
       name: 'Track 1',
+      type: 'audio',
       volume: 80,
       pan: 0,
       muted: false,
@@ -89,11 +80,18 @@ export default function DAWInterface() {
   // Recording logic unchanged
 
   const handlePlay = useCallback(() => {
-    setIsPlaying(!isPlaying)
-  }, [isPlaying])
+    if (isPlaying) {
+      transportPause()
+    } else {
+      if (currentTime !== 0) {
+        transportStop() // resets to 0
+      }
+      transportPlay()
+    }
+  }, [isPlaying, currentTime, transportPause, transportPlay, transportStop])
 
   const handleStop = useCallback(() => {
-    setIsPlaying(false)
+    transportStop()
     setIsRecording(false)
     setIsRecordingAutomation(false)
     // Stop recording on all tracks
@@ -103,12 +101,14 @@ export default function DAWInterface() {
         audioTrack?.stopRecording()
       }
     })
-    setCurrentTime(isLoopEnabled ? loopStart : 0)
-  }, [tracks, getTrack, isLoopEnabled, loopStart])
+    seekTransport(isLoopEnabled ? loopStart : 0)
+  }, [tracks, getTrack, isLoopEnabled, loopStart, transportStop, seekTransport])
 
   const handleRecordAutomation = useCallback(() => {
     setIsRecordingAutomation(!isRecordingAutomation)
   }, [isRecordingAutomation])
+
+  const recordAutoPlayRef = useRef(false)
 
   const handleRecord = useCallback(async (e?: React.MouseEvent) => {
     // 防止事件冒泡
@@ -143,6 +143,8 @@ export default function DAWInterface() {
         })
         setIsRecording(false)
         console.log(`⏹️ Recording stopped globally`)
+        // pause transport to keep currentTime where recording stopped
+        transportPause()
       } else {
         // Start recording on all armed tracks
         const armedTracks = tracks.filter(t => t.armed)
@@ -167,6 +169,10 @@ export default function DAWInterface() {
           }
         })
         
+        // start transport to advance timeline during recording
+        if (!isPlaying) {
+          transportPlay()
+        }
         setIsRecording(true)
         console.log(`🔴 Recording started globally`)
       }
@@ -192,12 +198,12 @@ export default function DAWInterface() {
   }, [isAutoscrollEnabled])
 
   const handleRewind = useCallback(() => {
-    setCurrentTime(Math.max(0, currentTime - 5))
-  }, [currentTime])
+    seekTransport(Math.max(0, currentTime - 5))
+  }, [currentTime, seekTransport])
 
   const handleFastForward = useCallback(() => {
-    setCurrentTime(Math.min(duration, currentTime + 5))
-  }, [currentTime, duration])
+    seekTransport(Math.min(duration, currentTime + 5))
+  }, [currentTime, duration, seekTransport])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -230,7 +236,7 @@ export default function DAWInterface() {
           break
         case 'Home':
           e.preventDefault()
-          setCurrentTime(isLoopEnabled ? loopStart : 0)
+          seekTransport(isLoopEnabled ? loopStart : 0)
           break
       }
     }
@@ -239,46 +245,11 @@ export default function DAWInterface() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isClient, isLoopEnabled, loopStart, handlePlay, handleRecord, toggleLoop, handleStop])
 
-  useEffect(() => {
-    let interval: NodeJS.Timeout
-    if (isPlaying || isRecording) {
-      interval = setInterval(() => {
-        setCurrentTime(prev => {
-          let nextTime = prev + 0.1
-          
-          // 调试输出：检查时间推进逻辑
-          console.log(`⏰ DAW Time Progress - prev: ${prev.toFixed(1)}, next: ${nextTime.toFixed(1)}, isLoop: ${isLoopEnabled}, loopEnd: ${loopEnd}, duration: ${duration}`)
-          
-          // Handle loop functionality
-          if (isLoopEnabled && nextTime >= loopEnd) {
-            console.log(`🔄 Loop reset: ${nextTime.toFixed(1)} -> ${loopStart}`)
-            nextTime = loopStart
-          } else if (nextTime >= duration) {
-            if (isPlaying && !isLoopEnabled) {
-              setIsPlaying(false)
-            }
-            if (isRecording) {
-              // Continue recording beyond the initial duration
-              setDuration(prev => prev + 10) // Extend duration by 10 seconds
-              console.log(`⏰ Extended duration by 10s, new duration: ${duration + 10}`)
-            }
-            if (!isLoopEnabled) {
-              console.log(`⏰ Reached duration limit: ${nextTime.toFixed(1)}`)
-              return nextTime
-            }
-          }
-          
-          return nextTime
-        })
-      }, 100)
-    }
-    return () => clearInterval(interval)
-  }, [isPlaying, isRecording, duration, isLoopEnabled, loopStart, loopEnd])
-
   const addTrack = useCallback(() => {
     const newTrack: Track = {
       id: (tracks.length + 1).toString(),
       name: `Track ${tracks.length + 1}`,
+      type: 'audio',
       volume: 80,
       pan: 0,
       muted: false,
@@ -370,6 +341,14 @@ export default function DAWInterface() {
     ))
   }, [isClient, tracks, duration, isPlaying, isRecording, currentTime, updateTrack])
 
+  // auto pause when end reached is disabled until clip re-enabled
+  useEffect(() => {
+    if (!isPlaying) return
+    if (!isLoopEnabled && currentTime >= duration) {
+      transportPause()
+    }
+  }, [isPlaying, currentTime, duration, isLoopEnabled, transportPause])
+
   return (
     <div className="h-screen bg-slate-900 text-white flex flex-col">
       {/* Audio Activation Banner - 只在客户端且音频引擎未激活时显示 */}
@@ -453,7 +432,7 @@ export default function DAWInterface() {
           <div className="flex items-center gap-1 mr-6 relative z-30">
             {/* Return to Zero */}
             <button
-              onClick={() => setCurrentTime(isLoopEnabled ? loopStart : 0)}
+              onClick={() => seekTransport(isLoopEnabled ? loopStart : 0)}
               className="w-8 h-8 bg-slate-700 hover:bg-slate-600 rounded flex items-center justify-center text-slate-300 hover:text-white relative z-10 transition-colors duration-150"
               style={{ pointerEvents: 'all' }}
               title="Back to Start"
@@ -708,10 +687,12 @@ export default function DAWInterface() {
           <SharedTimeline
             duration={duration}
             currentTime={currentTime}
-            onTimeChange={setCurrentTime}
+            onTimeChange={seekTransport}
             isLoopEnabled={isLoopEnabled}
             loopStart={loopStart}
             loopEnd={loopEnd}
+            trackCount={tracks.length}
+            isRecording={isRecording}
           />
           
           {/* Track Content Area */}
@@ -720,19 +701,7 @@ export default function DAWInterface() {
               <div className="p-4 text-slate-400 text-sm">Loading track content...</div>
             )}
             
-            {/* Playhead - 只在轨道内容区域显示，基于轨道数量计算高度 */}
-            {isClient && tracks.length > 0 && (
-              <div
-                className={`absolute top-0 z-20 shadow-lg ${
-                  isRecording ? 'w-1 bg-red-600' : 'w-0.5 bg-red-500'
-                }`}
-                style={{
-                  left: `${(currentTime / duration) * 100}%`,
-                  transform: 'translateX(-50%)',
-                  height: `${tracks.length * 108}px` // 每个轨道108px高度
-                }}
-              />
-            )}
+
           </div>
         </div>
       </div>

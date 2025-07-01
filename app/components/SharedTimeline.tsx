@@ -9,6 +9,8 @@ interface SharedTimelineProps {
   isLoopEnabled?: boolean
   loopStart?: number
   loopEnd?: number
+  trackCount?: number
+  isRecording?: boolean
 }
 
 export default function SharedTimeline({ 
@@ -17,7 +19,9 @@ export default function SharedTimeline({
   onTimeChange, 
   isLoopEnabled = false, 
   loopStart = 0, 
-  loopEnd = 16 
+  loopEnd = 16,
+  trackCount = 0,
+  isRecording = false
 }: SharedTimelineProps) {
   const timelineRef = useRef<HTMLDivElement>(null)
 
@@ -104,11 +108,15 @@ export default function SharedTimeline({
           </>
         )}
 
-        {/* Playhead */}
+        {/* Playhead - extends to cover all tracks */}
         <div
-          className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-30 pointer-events-none"
+          className={`absolute z-30 pointer-events-none ${
+            isRecording ? 'w-1 bg-red-600' : 'w-0.5 bg-red-500'
+          }`}
           style={{
-            left: `${(currentTime / duration) * 100}%`
+            left: `${(currentTime / duration) * 100}%`,
+            top: 0,
+            height: trackCount > 0 ? `${40 + trackCount * 108}px` : '40px' // 40px for timeline + 108px per track
           }}
         >
           {/* Playhead triangle */}

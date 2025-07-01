@@ -1,6 +1,9 @@
 'use client'
 
 import { BrowserCompat } from './browser-compat'
+// import { useClips } from '../state/clips'
+import { useTransport } from '../state/transport'
+import { AudioClip } from '../types/clip'
 
 export class AudioEngine {
   private audioContext: AudioContext | null = null
@@ -88,6 +91,7 @@ export class AudioTrack {
   private isRecording = false
   private isMuted = false
   private isSolo = false
+  private recordStartTime: number = 0
 
   constructor(id: string, audioContext: AudioContext, destination: AudioNode) {
     this.id = id
@@ -142,6 +146,7 @@ export class AudioTrack {
         await this.loadAudioFromBlob(blob)
       }
 
+      this.recordStartTime = useTransport.getState().currentTime
       this.recorder.start(BrowserCompat.isEdge() ? 1000 : 100) // Edge needs larger chunks
       this.isRecording = true
       console.log(`✅ Recording started for track ${this.id}`)
@@ -162,6 +167,9 @@ export class AudioTrack {
     try {
       const arrayBuffer = await blob.arrayBuffer()
       this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer)
+
+      // Clip creation disabled temporarily
+
     } catch (error) {
       console.error('Error loading audio:', error)
     }
