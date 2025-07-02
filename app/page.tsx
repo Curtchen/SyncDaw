@@ -46,6 +46,11 @@ export default function DAWInterface() {
   const [timeSignature, setTimeSignature] = useState({ numerator: 4, denominator: 4 })
   const [duration, setDuration] = useState(30) // 30 seconds
 
+  // Viewport scrolling for DAW-style recording
+  const [viewportStart, setViewportStart] = useState(0) // Start time of viewport window
+  const viewportDuration = 30 // Fixed 30s viewport
+  const playheadFixedAt = 15 // Red line fixed at 15s mark when scrolling
+
   const [tracks, setTracks] = useState<Track[]>([
     {
       id: '1',
@@ -231,6 +236,30 @@ export default function DAWInterface() {
     setLoopEnd(end)
   }, [])
 
+  // Update viewport during recording to keep playhead centered after 15s
+  useEffect(() => {
+    if (isRecording && currentTime > playheadFixedAt) {
+      const newViewportStart = currentTime - playheadFixedAt
+      setViewportStart(newViewportStart)
+    }
+  }, [isRecording, currentTime, playheadFixedAt])
+
+  // Handle manual viewport scrolling (when not recording)
+  const handleViewportScroll = useCallback((newStart: number) => {
+    if (!isRecording) {
+      const maxStart = Math.max(0, getMaxTrackDuration() - viewportDuration)
+      setViewportStart(Math.max(0, Math.min(maxStart, newStart)))
+    }
+  }, [isRecording, getMaxTrackDuration, viewportDuration])
+
+  // Calculate relative playhead position within viewport
+  const getPlayheadPosition = useCallback(() => {
+    if (isRecording && currentTime > playheadFixedAt) {
+      return playheadFixedAt // Fixed at center during recording
+    }
+    return Math.max(0, Math.min(viewportDuration, currentTime - viewportStart))
+  }, [isRecording, currentTime, playheadFixedAt, viewportStart, viewportDuration])
+
   const handleRewind = useCallback(() => {
     seekTransport(Math.max(0, currentTime - 5))
   }, [currentTime, seekTransport])
@@ -272,12 +301,42 @@ export default function DAWInterface() {
           e.preventDefault()
           seekTransport(isLoopEnabled ? loopStart : 0)
           break
+        case 'ArrowLeft':
+          if (e.ctrlKey) {
+            e.preventDefault()
+            handleViewportScroll(viewportStart - 5) // Scroll left 5 seconds
+          }
+          break
+        case 'ArrowRight':
+          if (e.ctrlKey) {
+            e.preventDefault()
+            handleViewportScroll(viewportStart + 5) // Scroll right 5 seconds
+          }
+          break
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isClient, isLoopEnabled, loopStart, handlePlay, handleRecord, toggleLoop, handleStop])
+  }, [isClient, isLoopEnabled, loopStart, handlePlay, handleRecord, toggleLoop, handleStop, handleViewportScroll, viewportStart])
+
+  // Scroll wheel navigation for timeline
+  useEffect(() => {
+    if (!isClient) return
+
+    const handleWheel = (e: WheelEvent) => {
+      // Only handle wheel events on timeline/track areas
+      const target = e.target as HTMLElement
+      if (target.closest('.timeline-scroll-area')) {
+        e.preventDefault()
+        const scrollAmount = e.deltaY > 0 ? 2 : -2 // 2 seconds per scroll
+        handleViewportScroll(viewportStart + scrollAmount)
+      }
+    }
+
+    window.addEventListener('wheel', handleWheel, { passive: false })
+    return () => window.removeEventListener('wheel', handleWheel)
+  }, [isClient, handleViewportScroll, viewportStart])
 
   const addTrack = useCallback(() => {
     const newTrack: Track = {
@@ -373,9 +432,11 @@ export default function DAWInterface() {
         currentTime={currentTime}
         onTrackUpdate={(updates) => updateTrack(track.id, updates)}
         onTimeChange={seekTransport}
+        viewportStart={viewportStart}
+        viewportDuration={viewportDuration}
       />
     ))
-  }, [isClient, tracks, duration, isPlaying, isRecording, currentTime, updateTrack, seekTransport])
+  }, [isClient, tracks, duration, isPlaying, isRecording, currentTime, updateTrack, seekTransport, viewportStart, viewportDuration])
 
   // Auto pause when playback reaches the end of the longest recorded track
   useEffect(() => {
@@ -772,12 +833,16 @@ export default function DAWInterface() {
         </div>
 
         {/* Right Panel - Timeline and Track Content */}
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col timeline-scroll-area">
           {/* Timeline Header */}
           <SharedTimeline
             duration={duration}
+            viewportStart={viewportStart}
+            viewportDuration={viewportDuration}
+            playheadPosition={getPlayheadPosition()}
             currentTime={currentTime}
             onTimeChange={seekTransport}
+            onViewportScroll={handleViewportScroll}
             isLoopEnabled={isLoopEnabled}
             loopStart={loopStart}
             loopEnd={loopEnd}
@@ -799,6 +864,65 @@ export default function DAWInterface() {
           </div>
         </div>
       </div>
+
+      {/* Bottom Progress Bar (Pager) - Show when content exceeds viewport */}
+      {getMaxTrackDuration() > viewportDuration && (
+        <div className="bg-slate-800 border-t border-slate-600 px-4 py-2">
+          <div className="flex items-center gap-4">
+            <span className="text-slate-400 text-xs">Timeline:</span>
+            
+            {/* Progress bar track */}
+            <div className="flex-1 h-2 bg-slate-700 rounded-full relative">
+              {/* Total duration background */}
+              <div className="w-full h-full bg-slate-600 rounded-full"></div>
+              
+              {/* Viewport indicator */}
+              <div 
+                className="absolute top-0 h-full bg-blue-500 rounded-full opacity-70 cursor-pointer"
+                style={{
+                  left: `${(viewportStart / getMaxTrackDuration()) * 100}%`,
+                  width: `${(viewportDuration / getMaxTrackDuration()) * 100}%`
+                }}
+                onMouseDown={(e) => {
+                  const startDrag = (clientX: number) => {
+                    const rect = e.currentTarget.parentElement?.getBoundingClientRect()
+                    if (!rect) return
+                    const x = clientX - rect.left
+                    const percentage = Math.max(0, Math.min(1, x / rect.width))
+                    const newStart = percentage * getMaxTrackDuration() - viewportDuration / 2
+                    handleViewportScroll(newStart)
+                  }
+                  
+                  startDrag(e.clientX)
+                  
+                  const handleMouseMove = (e: MouseEvent) => startDrag(e.clientX)
+                  const handleMouseUp = () => {
+                    document.removeEventListener('mousemove', handleMouseMove)
+                    document.removeEventListener('mouseup', handleMouseUp)
+                  }
+                  
+                  document.addEventListener('mousemove', handleMouseMove)
+                  document.addEventListener('mouseup', handleMouseUp)
+                  e.preventDefault()
+                }}
+              />
+              
+              {/* Current playhead position indicator */}
+              <div 
+                className="absolute top-0 w-0.5 h-full bg-red-500 pointer-events-none"
+                style={{
+                  left: `${(currentTime / getMaxTrackDuration()) * 100}%`
+                }}
+              />
+            </div>
+            
+            {/* Time info */}
+            <div className="text-slate-400 text-xs whitespace-nowrap">
+              {Math.floor(viewportStart)}s - {Math.floor(viewportStart + viewportDuration)}s / {Math.floor(getMaxTrackDuration())}s
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

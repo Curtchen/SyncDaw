@@ -9,6 +9,8 @@ interface WaveformTrackProps {
   trackId: string
   duration: number
   currentTime: number
+  viewportStart?: number
+  viewportDuration?: number
   height: number
   width: number
   amplitudeScale?: number  // 波形幅度缩放，0-1之间
@@ -20,6 +22,8 @@ export default function WaveformTrack({
   isArmed,
   currentTime,
   duration,
+  viewportStart = 0,
+  viewportDuration = 30,
   width,
   height,
   amplitudeScale = 1    // 默认100%灵敏度
@@ -29,61 +33,63 @@ export default function WaveformTrack({
   const audioContextRef = useRef<AudioContext>()
   const analyserRef = useRef<AnalyserNode>()
   const microphoneRef = useRef<MediaStreamAudioSourceNode>()
-  // 记录录音开始的时间（AudioContext.currentTime）
-  const recordStartRef = useRef<number>(0)
-  // 记录最后写入的像素位置
-  const lastRecordedXRef = useRef<number>(-1)
-  // per-pixel min/max data for waveform axis
-  const minDataRef = useRef<number[]>([])
-  const maxDataRef = useRef<number[]>([])
+  
+  // 改为基于时间的全局数据存储 - 每秒存储100个采样点 (高精度)
+  const SAMPLES_PER_SECOND = 100
+  const globalMinDataRef = useRef<Map<number, number>>(new Map()) // key: 时间索引, value: min值
+  const globalMaxDataRef = useRef<Map<number, number>>(new Map()) // key: 时间索引, value: max值
+  
+  // 记录录音开始的时间点，确保波形从正确位置开始
+  const recordingStartTimeRef = useRef<number | null>(null)
+  
   // keep latest props for non-reactive loops
-  const propsRef = useRef({ currentTime, duration, width })
-  propsRef.current = { currentTime, duration, width }
-   
+  const propsRef = useRef({ currentTime, duration, width, viewportStart, viewportDuration })
+  propsRef.current = { currentTime, duration, width, viewportStart, viewportDuration }
+
   useEffect(() => {
     // reset data and start/stop audio capture
     if (isRecording && isArmed) {
-      // initialize per-pixel storage only if not already done or width changed
-      if (minDataRef.current.length !== width) {
-        const oldMin = minDataRef.current
-        const oldMax = maxDataRef.current
-        minDataRef.current = new Array(width).fill(0)
-        maxDataRef.current = new Array(width).fill(0)
-        // copy old data if exists
-        for (let i = 0; i < Math.min(oldMin.length, width); i++) {
-          minDataRef.current[i] = oldMin[i] || 0
-          maxDataRef.current[i] = oldMax[i] || 0
-        }
-        // Reset last recorded position when width changes
-        lastRecordedXRef.current = -1
-      }
       startRecording()
     } else {
       stopRecording()
+      // 如果停止录音，但不清除数据，保持波形可见
     }
 
     return () => {
       stopRecording()
     }
-  }, [isRecording, isArmed, width])
+  }, [isRecording, isArmed])
 
   useEffect(() => {
-    // redraw whenever timeline updates
+    // redraw whenever timeline updates or viewport changes
     drawWaveform()
-  }, [currentTime, duration, width, height])
+  }, [currentTime, duration, width, height, viewportStart, viewportDuration])
+
+  // 移除视口滚动时的数据平移逻辑，因为我们现在使用全局时间存储
 
   const startRecording = async () => {
     try {
+      // 记录录音开始时的时间
+      recordingStartTimeRef.current = propsRef.current.currentTime
+      
+      // 如果是新的录音session，清除该轨道之前可能存在的数据
+      // （这里可以选择是否清除，取决于是否支持多次录音的叠加）
+      
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
-      // 记录开始时间
-      recordStartRef.current = audioContextRef.current.currentTime
       analyserRef.current = audioContextRef.current.createAnalyser()
       microphoneRef.current = audioContextRef.current.createMediaStreamSource(stream)
       analyserRef.current.fftSize = 2048
       analyserRef.current.smoothingTimeConstant = 0.2
       microphoneRef.current.connect(analyserRef.current)
+      
+      // 立即采集第一个数据点，确保波形从录音开始时刻就有数据
+      const startTime = recordingStartTimeRef.current
+      const timeIndex = Math.floor(startTime * SAMPLES_PER_SECOND)
+      globalMinDataRef.current.set(timeIndex, 0) // 初始静音状态
+      globalMaxDataRef.current.set(timeIndex, 0)
+      
       // start capturing per-pixel min/max
       captureAudio()
     } catch (err) {
@@ -97,6 +103,8 @@ export default function WaveformTrack({
     if (microphoneRef.current) microphoneRef.current.disconnect()
      
     if (audioContextRef.current && audioContextRef.current.state !== 'closed') audioContextRef.current.close()
+    
+    // 不重置 recordingStartTimeRef，保持历史记录
   }
 
   const captureAudio = () => {
@@ -112,14 +120,14 @@ export default function WaveformTrack({
       minSample = Math.min(minSample, sample)
       maxSample = Math.max(maxSample, sample)
     }
-    // 计算录音进度对应的像素
-    const { currentTime: curT, duration: dur, width: w } = propsRef.current
-    const playheadX = Math.floor((curT / dur) * w)
-    if (playheadX >= 0 && playheadX < w) {
-      minDataRef.current[playheadX] = minSample
-      maxDataRef.current[playheadX] = maxSample
-      lastRecordedXRef.current = playheadX
-    }
+    
+    // 将数据存储到基于时间的全局数组中
+    const { currentTime: curT } = propsRef.current
+    const timeIndex = Math.floor(curT * SAMPLES_PER_SECOND) // 当前时间对应的采样索引
+    
+    globalMinDataRef.current.set(timeIndex, minSample)
+    globalMaxDataRef.current.set(timeIndex, maxSample)
+    
     drawWaveform()
     animationRef.current = requestAnimationFrame(captureAudio)
   }
@@ -143,32 +151,64 @@ export default function WaveformTrack({
     
     ctx.clearRect(0, 0, rect.width, rect.height)
     
-    // Scale data to match current width if needed
-    const dataScale = minDataRef.current.length / drawWidth
+    const { viewportStart: vpStart, viewportDuration: vpDuration, currentTime } = propsRef.current
+    const amp = (rect.height / 2) * amplitudeScale
     
-    const amp = (rect.height / 2) * amplitudeScale;
-    const endX = Math.min(lastRecordedXRef.current / dataScale, drawWidth)
+    // 如果还没有开始录音或没有数据，直接返回
+    if (recordingStartTimeRef.current === null || globalMinDataRef.current.size === 0) return
     
-    if (endX < 0) return // No data to draw yet
+    // 计算实际的绘制范围：从录音开始到当前时间（如果在录音中）
+    const recordStart = recordingStartTimeRef.current
+    const recordEnd = isRecording ? currentTime : Math.max(...Array.from(globalMinDataRef.current.keys())) / SAMPLES_PER_SECOND
     
-    ctx.beginPath()
-    // Top envelope (max) - sample data points based on scale
-    let dataIndex = Math.floor(0 * dataScale)
-    ctx.moveTo(0, centerY - (maxDataRef.current[dataIndex] || 0) * amp)
+    // 计算视口和录音数据的交集
+    const drawStart = Math.max(vpStart, recordStart)
+    const drawEnd = Math.min(vpStart + vpDuration, recordEnd)
     
-    for (let x = 1; x <= endX; x++) {
-      dataIndex = Math.floor(x * dataScale)
-      if (dataIndex < minDataRef.current.length) {
-        ctx.lineTo(x, centerY - (maxDataRef.current[dataIndex] || 0) * amp)
+    if (drawStart >= drawEnd) return // 没有交集
+    
+    // 计算绘制范围内的采样点
+    const startIndex = Math.floor(drawStart * SAMPLES_PER_SECOND)
+    const endIndex = Math.floor(drawEnd * SAMPLES_PER_SECOND)
+    
+    // 收集数据点，对于缺失的点使用0值
+    const dataPoints: Array<{timeIndex: number, minValue: number, maxValue: number}> = []
+    
+    for (let timeIndex = startIndex; timeIndex <= endIndex; timeIndex++) {
+      const time = timeIndex / SAMPLES_PER_SECOND
+      // 只处理录音范围内的时间
+      if (time >= recordStart && time <= recordEnd) {
+        let minValue = globalMinDataRef.current.get(timeIndex) ?? 0
+        let maxValue = globalMaxDataRef.current.get(timeIndex) ?? 0
+        dataPoints.push({ timeIndex, minValue, maxValue })
       }
     }
     
-    // Bottom envelope (min) in reverse
-    for (let x = Math.floor(endX); x >= 0; x--) {
-      dataIndex = Math.floor(x * dataScale)
-      if (dataIndex < minDataRef.current.length) {
-        ctx.lineTo(x, centerY - (minDataRef.current[dataIndex] || 0) * amp)
+    if (dataPoints.length === 0) return
+    
+    // 绘制波形
+    ctx.beginPath()
+    
+    // 绘制上包络线（max值）
+    dataPoints.forEach((point, index) => {
+      const time = point.timeIndex / SAMPLES_PER_SECOND
+      const x = ((time - vpStart) / vpDuration) * drawWidth
+      const y = centerY - point.maxValue * amp
+      
+      if (index === 0) {
+        ctx.moveTo(x, y)
+      } else {
+        ctx.lineTo(x, y)
       }
+    })
+    
+    // 绘制下包络线（min值）- 反向
+    for (let i = dataPoints.length - 1; i >= 0; i--) {
+      const point = dataPoints[i]
+      const time = point.timeIndex / SAMPLES_PER_SECOND
+      const x = ((time - vpStart) / vpDuration) * drawWidth
+      const y = centerY - point.minValue * amp
+      ctx.lineTo(x, y)
     }
     
     ctx.closePath()

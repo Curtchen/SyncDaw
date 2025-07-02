@@ -8,6 +8,8 @@ interface TrackContentProps {
   track: Track
   trackId: string
   duration: number
+  viewportStart?: number
+  viewportDuration?: number
   height: number
   isPlaying: boolean
   isRecording: boolean
@@ -20,6 +22,8 @@ export default function TrackContent({
   track,
   trackId,
   duration,
+  viewportStart = 0,
+  viewportDuration = 30,
   height,
   isPlaying,
   isRecording,
@@ -38,7 +42,7 @@ export default function TrackContent({
     const rect = containerRef.current.getBoundingClientRect()
     const x = clientX - rect.left
     const percentage = Math.max(0, Math.min(1, x / rect.width))
-    return percentage * duration
+    return viewportStart + (percentage * viewportDuration)
   }
 
   // 监听容器尺寸变化
@@ -99,6 +103,8 @@ export default function TrackContent({
           isArmed={track.armed}
           currentTime={currentTime}
           duration={duration}
+          viewportStart={viewportStart}
+          viewportDuration={viewportDuration}
           width={containerWidth}
           height={height} // 填满整个轨道高度
         />

@@ -4,8 +4,12 @@ import { useRef, useCallback } from 'react'
 
 interface SharedTimelineProps {
   duration: number
+  viewportStart?: number
+  viewportDuration?: number
+  playheadPosition?: number
   currentTime: number
   onTimeChange: (time: number) => void
+  onViewportScroll?: (newStart: number) => void
   isLoopEnabled?: boolean
   loopStart?: number
   loopEnd?: number
@@ -17,8 +21,12 @@ interface SharedTimelineProps {
 
 export default function SharedTimeline({ 
   duration, 
+  viewportStart = 0,
+  viewportDuration = 30,
+  playheadPosition,
   currentTime, 
   onTimeChange, 
+  onViewportScroll,
   isLoopEnabled = false, 
   loopStart = 0, 
   loopEnd = 16,
@@ -29,8 +37,10 @@ export default function SharedTimeline({
 }: SharedTimelineProps) {
   const timelineRef = useRef<HTMLDivElement>(null)
 
-  // Use effective duration for timeline calculations
-  const effectiveDuration = Math.max(maxTrackDuration || 0, duration)
+  // Use viewport duration for timeline calculations
+  const effectiveDuration = viewportDuration
+  const totalDuration = Math.max(maxTrackDuration || 0, duration)
+  const viewportEnd = viewportStart + viewportDuration
 
   // Drag-to-select state for loop region
   const selectingRef = useRef(false)
@@ -44,9 +54,9 @@ export default function SharedTimeline({
       const rect = timelineRef.current.getBoundingClientRect()
       const x = clientX - rect.left
       const percentage = Math.max(0, Math.min(1, x / rect.width))
-      return percentage * effectiveDuration
+      return viewportStart + (percentage * viewportDuration)
     },
-    [effectiveDuration]
+    [viewportStart, viewportDuration]
   )
 
   const handleTimelineClick = useCallback((e: React.MouseEvent) => {
@@ -56,13 +66,10 @@ export default function SharedTimeline({
       return
     }
     if (timelineRef.current) {
-      const rect = timelineRef.current.getBoundingClientRect()
-      const x = e.clientX - rect.left
-      const percentage = x / rect.width
-      const newTime = Math.max(0, Math.min(effectiveDuration, percentage * effectiveDuration))
-      onTimeChange(newTime)
+      const clickTime = posToTime(e.clientX)
+      onTimeChange(clickTime)
     }
-  }, [effectiveDuration, onTimeChange])
+  }, [posToTime, onTimeChange])
 
   // Handlers for drag interactions (playhead or loop)
 
@@ -71,7 +78,8 @@ export default function SharedTimeline({
       const clickTime = posToTime(e.clientX)
 
       const rect = timelineRef.current?.getBoundingClientRect()
-      const playheadX = (currentTime / effectiveDuration) * (rect?.width || 1)
+      const displayPlayheadPos = playheadPosition !== undefined ? playheadPosition : (currentTime - viewportStart)
+      const playheadX = (displayPlayheadPos / viewportDuration) * (rect?.width || 1)
       const clickX = e.clientX - (rect?.left || 0)
 
       // Decide mode
@@ -81,8 +89,8 @@ export default function SharedTimeline({
         onTimeChange(clickTime)
       } else if (isLoopEnabled && onLoopChange) {
         // Check if clicking on loop boundaries
-        const loopStartX = (loopStart / effectiveDuration) * (rect?.width || 1)
-        const loopEndX = (loopEnd / effectiveDuration) * (rect?.width || 1)
+        const loopStartX = ((loopStart - viewportStart) / viewportDuration) * (rect?.width || 1)
+        const loopEndX = ((loopEnd - viewportStart) / viewportDuration) * (rect?.width || 1)
 
         const boundaryTolerance = 6
         if (Math.abs(clickX - loopStartX) <= boundaryTolerance) {
@@ -109,7 +117,7 @@ export default function SharedTimeline({
       e.preventDefault()
       e.stopPropagation()
     },
-    [currentTime, effectiveDuration, isLoopEnabled, loopStart, loopEnd, onLoopChange, onTimeChange, posToTime]
+    [currentTime, playheadPosition, viewportStart, viewportDuration, isLoopEnabled, loopStart, loopEnd, onLoopChange, onTimeChange, posToTime]
   )
 
   const handleMouseMove = useCallback(
@@ -168,13 +176,17 @@ export default function SharedTimeline({
   const interval = 1 // 每秒一个刻度
   const subMarkers = [] // 子刻度（0.5秒等）
   
-  for (let i = 0; i <= effectiveDuration; i += interval) {
-    markers.push(i)
+  for (let i = Math.floor(viewportStart); i <= viewportEnd; i += interval) {
+    if (i >= viewportStart && i <= viewportEnd) {
+      markers.push(i)
+    }
   }
   
   // 添加0.5秒的子刻度，让时间轴更精细
-  for (let i = 0.5; i <= effectiveDuration; i += 1) {
-    subMarkers.push(i)
+  for (let i = Math.floor(viewportStart) + 0.5; i <= viewportEnd; i += 1) {
+    if (i >= viewportStart && i <= viewportEnd) {
+      subMarkers.push(i)
+    }
   }
 
   return (
@@ -194,7 +206,7 @@ export default function SharedTimeline({
             <div
               key={`grid-${time}`}
               className="absolute top-0 bottom-0 w-px bg-slate-500"
-              style={{ left: `${(time / effectiveDuration) * 100}%` }}
+              style={{ left: `${((time - viewportStart) / viewportDuration) * 100}%` }}
             />
           ))}
         </div>
@@ -205,7 +217,7 @@ export default function SharedTimeline({
             <div
               key={`sub-${time}`}
               className="absolute top-6 w-px h-2 bg-slate-600 opacity-60"
-              style={{ left: `${(time / effectiveDuration) * 100}%` }}
+              style={{ left: `${((time - viewportStart) / viewportDuration) * 100}%` }}
             />
           ))}
         </div>
@@ -217,7 +229,7 @@ export default function SharedTimeline({
               key={time}
               className="flex-none relative"
               style={{ 
-                left: `${(time / effectiveDuration) * 100}%`,
+                left: `${((time - viewportStart) / viewportDuration) * 100}%`,
                 width: '1px'
               }}
             >
@@ -229,53 +241,61 @@ export default function SharedTimeline({
           ))}
         </div>
 
-        {/* Loop region */}
-        {isLoopEnabled && (
+        {/* Loop region - only show if within viewport */}
+        {isLoopEnabled && loopEnd > viewportStart && loopStart < viewportEnd && (
           <>
             {/* Loop region background */}
             <div
               className="absolute top-0 bottom-0 bg-yellow-500 bg-opacity-10 border-l-2 border-r-2 border-yellow-500 pointer-events-none"
               style={{
-                left: `${(loopStart / effectiveDuration) * 100}%`,
-                width: `${((loopEnd - loopStart) / effectiveDuration) * 100}%`
+                left: `${Math.max(0, (loopStart - viewportStart) / viewportDuration) * 100}%`,
+                width: `${Math.min(100, ((Math.min(loopEnd, viewportEnd) - Math.max(loopStart, viewportStart)) / viewportDuration) * 100)}%`
               }}
             />
             
-            {/* Loop markers */}
-            <div
+            {/* Loop start marker */}
+            {loopStart >= viewportStart && loopStart <= viewportEnd && (<div
               className="absolute top-0 bottom-0 w-1 bg-yellow-500 pointer-events-none z-20"
               style={{
-                left: `${(loopStart / effectiveDuration) * 100}%`
+                left: `${((loopStart - viewportStart) / viewportDuration) * 100}%`
               }}
             >
               <div className="absolute -top-1 left-0 w-0 h-0 border-l-2 border-r-2 border-b-2 border-transparent border-b-yellow-500"></div>
-            </div>
+            </div>)}
             
-            <div
+            {/* Loop end marker */}
+            {loopEnd >= viewportStart && loopEnd <= viewportEnd && (<div
               className="absolute top-0 bottom-0 w-1 bg-yellow-500 pointer-events-none z-20"
               style={{
-                left: `${(loopEnd / effectiveDuration) * 100}%`
+                left: `${((loopEnd - viewportStart) / viewportDuration) * 100}%`
               }}
             >
               <div className="absolute -top-1 right-0 w-0 h-0 border-l-2 border-r-2 border-b-2 border-transparent border-b-yellow-500"></div>
-            </div>
+            </div>)}
           </>
         )}
 
         {/* Playhead - extends to cover all tracks */}
-        <div
-          className={`absolute z-30 pointer-events-none ${
-            isRecording ? 'w-1 bg-red-600' : 'w-0.5 bg-red-500'
-          }`}
-          style={{
-            left: `${(currentTime / effectiveDuration) * 100}%`,
-            top: 0,
-            height: trackCount > 0 ? `${40 + trackCount * 108}px` : '40px' // 40px for timeline + 108px per track
-          }}
-        >
-          {/* Playhead triangle */}
-          <div className="absolute -top-2 -left-1 w-0 h-0 border-l-2 border-r-2 border-b-2 border-transparent border-b-red-500"></div>
-        </div>
+        {(() => {
+          const displayPosition = playheadPosition !== undefined ? playheadPosition : (currentTime - viewportStart)
+          if (displayPosition < 0 || displayPosition > viewportDuration) return null
+          
+          return (
+            <div
+              className={`absolute z-30 pointer-events-none ${
+                isRecording ? 'w-1 bg-red-600' : 'w-0.5 bg-red-500'
+              }`}
+              style={{
+                left: `${(displayPosition / viewportDuration) * 100}%`,
+                top: 0,
+                height: trackCount > 0 ? `${40 + trackCount * 108}px` : '40px' // 40px for timeline + 108px per track
+              }}
+            >
+              {/* Playhead triangle */}
+              <div className="absolute -top-2 -left-1 w-0 h-0 border-l-2 border-r-2 border-b-2 border-transparent border-b-red-500"></div>
+            </div>
+          )
+        })()}
       </div>
     </div>
   )
