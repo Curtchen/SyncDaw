@@ -47,13 +47,15 @@ export default function WaveformTrack({
       if (minDataRef.current.length !== width) {
         const oldMin = minDataRef.current
         const oldMax = maxDataRef.current
-      minDataRef.current = new Array(width).fill(0)
-      maxDataRef.current = new Array(width).fill(0)
+        minDataRef.current = new Array(width).fill(0)
+        maxDataRef.current = new Array(width).fill(0)
         // copy old data if exists
         for (let i = 0; i < Math.min(oldMin.length, width); i++) {
           minDataRef.current[i] = oldMin[i] || 0
           maxDataRef.current[i] = oldMax[i] || 0
         }
+        // Reset last recorded position when width changes
+        lastRecordedXRef.current = -1
       }
       startRecording()
     } else {
@@ -125,29 +127,50 @@ export default function WaveformTrack({
   const drawWaveform = () => {
     const canvas = canvasRef.current; if (!canvas) return
     const ctx = canvas.getContext('2d'); if (!ctx) return
-    // 高DPI 画布设置
-    const dpr = window.devicePixelRatio || 1
+    
+    // Get actual rendered dimensions
     const rect = canvas.getBoundingClientRect()
-    canvas.width = rect.width * dpr
-    canvas.height = rect.height * dpr
+    const dpr = window.devicePixelRatio || 1
+    
+    // Set canvas size to match actual display size
+    canvas.width = Math.floor(rect.width * dpr)
+    canvas.height = Math.floor(rect.height * dpr)
     ctx.scale(dpr, dpr)
-    // 使用渲染后 CSS 尺寸
+    
+    // Use actual rendered dimensions for calculations
     const centerY = rect.height / 2
-    // 清空背景
+    const drawWidth = rect.width
+    
     ctx.clearRect(0, 0, rect.width, rect.height)
-    // envelope fill: use half height so waveform spans full track
+    
+    // Scale data to match current width if needed
+    const dataScale = minDataRef.current.length / drawWidth
+    
     const amp = (rect.height / 2) * amplitudeScale;
-    const endX = lastRecordedXRef.current
+    const endX = Math.min(lastRecordedXRef.current / dataScale, drawWidth)
+    
+    if (endX < 0) return // No data to draw yet
+    
     ctx.beginPath()
-    // 上包络(max)
-    ctx.moveTo(0, centerY - (maxDataRef.current[0] || 0) * amp)
+    // Top envelope (max) - sample data points based on scale
+    let dataIndex = Math.floor(0 * dataScale)
+    ctx.moveTo(0, centerY - (maxDataRef.current[dataIndex] || 0) * amp)
+    
     for (let x = 1; x <= endX; x++) {
-      ctx.lineTo(x, centerY - (maxDataRef.current[x] || 0) * amp)
+      dataIndex = Math.floor(x * dataScale)
+      if (dataIndex < minDataRef.current.length) {
+        ctx.lineTo(x, centerY - (maxDataRef.current[dataIndex] || 0) * amp)
+      }
     }
-    // 下包络(min) 倒序
-    for (let x = endX; x >= 0; x--) {
-      ctx.lineTo(x, centerY - (minDataRef.current[x] || 0) * amp)
+    
+    // Bottom envelope (min) in reverse
+    for (let x = Math.floor(endX); x >= 0; x--) {
+      dataIndex = Math.floor(x * dataScale)
+      if (dataIndex < minDataRef.current.length) {
+        ctx.lineTo(x, centerY - (minDataRef.current[dataIndex] || 0) * amp)
+      }
     }
+    
     ctx.closePath()
     ctx.fillStyle = 'rgba(59,130,246,0.6)'  // 半透明填充
     ctx.fill()

@@ -43,15 +43,25 @@ export default function TrackContent({
 
   // 监听容器尺寸变化
   useEffect(() => {
+    if (!containerRef.current) return
+
     const updateWidth = () => {
       if (containerRef.current) {
         setContainerWidth(containerRef.current.clientWidth)
       }
     }
 
-    updateWidth()
-    window.addEventListener('resize', updateWidth)
-    return () => window.removeEventListener('resize', updateWidth)
+    // Use ResizeObserver for better tracking of size changes (including zoom)
+    const resizeObserver = new ResizeObserver(() => {
+      updateWidth()
+    })
+
+    resizeObserver.observe(containerRef.current)
+    updateWidth() // Initial measurement
+
+    return () => {
+      resizeObserver.disconnect()
+    }
   }, [])
 
   return (
