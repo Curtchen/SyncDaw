@@ -41,27 +41,54 @@ export default function SharedTimeline({
   }, [effectiveDuration, onTimeChange])
 
   const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = Math.floor(seconds % 60)
-    const milliseconds = Math.floor((seconds % 1) * 1000)
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}:${milliseconds.toString().padStart(3, '0')}`
+    // 简单显示秒数，如 1, 2, 3...
+    return Math.floor(seconds).toString()
   }
 
   // Generate time markers - adjust interval based on duration for precise timing
   const markers = []
-  const interval = effectiveDuration <= 10 ? 1 : effectiveDuration <= 30 ? 2 : 5 // More granular for short durations
+  const interval = 1 // 每秒一个刻度
+  const subMarkers = [] // 子刻度（0.5秒等）
+  
   for (let i = 0; i <= effectiveDuration; i += interval) {
     markers.push(i)
   }
+  
+  // 添加0.5秒的子刻度，让时间轴更精细
+  for (let i = 0.5; i <= effectiveDuration; i += 1) {
+    subMarkers.push(i)
+  }
 
   return (
-    <div className="bg-slate-900 border-b border-slate-700">
+    <div className="bg-slate-800 border-b border-slate-600 relative">
       <div 
         ref={timelineRef}
-        className="relative cursor-pointer select-none"
+        className="relative cursor-pointer select-none bg-gradient-to-b from-slate-800 to-slate-900"
         style={{ height: '40px' }}
         onClick={handleTimelineClick}
       >
+        {/* Background grid */}
+        <div className="absolute inset-0 opacity-20">
+          {markers.map((time) => (
+            <div
+              key={`grid-${time}`}
+              className="absolute top-0 bottom-0 w-px bg-slate-500"
+              style={{ left: `${(time / effectiveDuration) * 100}%` }}
+            />
+          ))}
+        </div>
+        
+        {/* Sub markers (0.5 second marks) */}
+        <div className="absolute inset-0">
+          {subMarkers.map((time) => (
+            <div
+              key={`sub-${time}`}
+              className="absolute top-6 w-px h-2 bg-slate-600 opacity-60"
+              style={{ left: `${(time / effectiveDuration) * 100}%` }}
+            />
+          ))}
+        </div>
+
         {/* Time markers */}
         <div className="absolute inset-0 flex">
           {markers.map((time) => (
@@ -73,8 +100,8 @@ export default function SharedTimeline({
                 width: '1px'
               }}
             >
-              <div className="absolute top-0 w-px h-full bg-slate-600" />
-              <div className="absolute top-1 left-1 text-xs text-slate-400 whitespace-nowrap">
+              <div className="absolute top-0 w-px h-4 bg-slate-400" />
+              <div className="absolute top-5 left-1 text-xs text-slate-300 font-medium whitespace-nowrap">
                 {formatTime(time)}
               </div>
             </div>

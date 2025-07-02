@@ -10,7 +10,7 @@ import { Track } from './types/track'
 import { useTransport } from './state/transport'
 
 export default function DAWInterface() {
-  const { isInitialized, masterVolume, createTrack, getTrack, removeTrack: removeAudioTrack, setMasterVolume, getMaxTrackDuration, getAllTrackDurations } = useAudioEngine()
+  const { isInitialized, masterVolume, createTrack, getTrack, removeTrack: removeAudioTrack, setMasterVolume, getMaxTrackDuration, getAllTrackDurations, audioEngine } = useAudioEngine()
   
   // Project settings
   const [projectName, setProjectName] = useState('Untitled')
@@ -50,6 +50,8 @@ export default function DAWInterface() {
   ])
 
   const timelineRef = useRef<HTMLDivElement>(null)
+  const trackScrollRef = useRef<HTMLDivElement>(null)
+  const contentScrollRef = useRef<HTMLDivElement>(null)
 
   // Client-side initialization
   useEffect(() => {
@@ -197,8 +199,20 @@ export default function DAWInterface() {
   }, [isLoopEnabled])
 
   const toggleMetronome = useCallback(() => {
-    setIsMetronomeEnabled(!isMetronomeEnabled)
-  }, [isMetronomeEnabled])
+    const newState = !isMetronomeEnabled
+    setIsMetronomeEnabled(newState)
+    
+    // 调用音频引擎的节拍器功能
+    if (audioEngine && isInitialized) {
+      if (newState) {
+        audioEngine.startMetronome(bpm, 50) // 50% 音量
+        console.log(`🥁 Metronome started at ${bpm} BPM`)
+      } else {
+        audioEngine.stopMetronome()
+        console.log(`🔇 Metronome stopped`)
+      }
+    }
+  }, [isMetronomeEnabled, audioEngine, isInitialized, bpm])
 
   const toggleMonitoring = useCallback(() => {
     setIsMonitoringEnabled(!isMonitoringEnabled)
@@ -371,6 +385,83 @@ export default function DAWInterface() {
       console.log(`⏸️ Auto-paused at end of longest track (${effectiveDuration}s)`) 
     }
   }, [isPlaying, isRecording, currentTime, duration, isLoopEnabled, transportPause, getMaxTrackDuration, seekTransport])
+
+  // 同步音轨播放状态与transport状态
+  useEffect(() => {
+    if (!isInitialized) return
+
+    tracks.forEach(track => {
+      const audioTrack = getTrack(track.id)
+      if (audioTrack) {
+        if (isPlaying && !isRecording) {
+          // 开始播放音轨，从当前时间开始
+          const playTime = useTransport.getState().currentTime
+          audioTrack.play(playTime)
+          console.log(`🎵 Starting playback for track ${track.id} at ${playTime}s`)
+        } else {
+          // 停止播放音轨
+          audioTrack.stop()
+          console.log(`⏹️ Stopping playback for track ${track.id}`)
+        }
+      }
+    })
+  }, [isPlaying, isRecording, tracks, getTrack, isInitialized])
+
+  // 自动滚屏功能
+  useEffect(() => {
+    if (!isAutoscrollEnabled || !isPlaying || !contentScrollRef.current) return
+
+    const container = contentScrollRef.current
+    const containerWidth = container.clientWidth
+    const scrollLeft = container.scrollLeft
+    const maxTrackDuration = getMaxTrackDuration()
+    const effectiveDuration = Math.max(maxTrackDuration, duration)
+    
+    // 计算当前播放头的像素位置
+    const playheadPixelPosition = (currentTime / effectiveDuration) * container.scrollWidth
+    
+    // 如果播放头超出可视区域右边界，自动滚动
+    if (playheadPixelPosition > scrollLeft + containerWidth - 100) { // 留100px边距
+      const newScrollLeft = playheadPixelPosition - containerWidth + 200 // 滚动到距离右边200px处
+      container.scrollTo({
+        left: Math.max(0, newScrollLeft),
+        behavior: 'smooth'
+      })
+      console.log(`📜 Auto-scrolled to keep playhead visible`)
+    }
+    
+    // 如果播放头超出可视区域左边界，自动滚动回来
+    if (playheadPixelPosition < scrollLeft + 100) { // 留100px边距
+      const newScrollLeft = Math.max(0, playheadPixelPosition - 200) // 滚动到距离左边200px处
+      container.scrollTo({
+        left: newScrollLeft,
+        behavior: 'smooth'
+      })
+      console.log(`📜 Auto-scrolled to keep playhead visible`)
+    }
+  }, [isAutoscrollEnabled, isPlaying, currentTime, duration, getMaxTrackDuration])
+
+  // BPM变化时更新节拍器
+  useEffect(() => {
+    if (isMetronomeEnabled && audioEngine && isInitialized) {
+      // 重新启动节拍器以应用新的BPM
+      audioEngine.startMetronome(bpm, 50)
+      console.log(`🥁 Metronome BPM updated to ${bpm}`)
+    }
+  }, [bpm, isMetronomeEnabled, audioEngine, isInitialized])
+
+  // 同步轨道控制面板和内容区域的垂直滚动
+  const handleTrackScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    if (contentScrollRef.current && trackScrollRef.current) {
+      contentScrollRef.current.scrollTop = trackScrollRef.current.scrollTop
+    }
+  }, [])
+
+  const handleContentScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    if (trackScrollRef.current && contentScrollRef.current) {
+      trackScrollRef.current.scrollTop = contentScrollRef.current.scrollTop
+    }
+  }, [])
 
   return (
     <div className="h-screen bg-slate-900 text-white flex flex-col">
@@ -554,11 +645,6 @@ export default function DAWInterface() {
             <div className="text-slate-400 text-sm ml-2">
               {isRecording ? 'REC' : isPlaying ? 'PLAY' : 'STOP'}
               {isRecordingAutomation && ' AUTO'}
-              {(getMaxTrackDuration() > 0 || isRecording) && (
-                <div className="text-xs text-green-400 mt-0.5">
-                  {isRecording ? `Recording: ${formatTime(currentTime)}` : `Track: ${formatTime(getMaxTrackDuration())}`}
-                </div>
-              )}
             </div>
           </div>
 
@@ -702,7 +788,11 @@ export default function DAWInterface() {
           </div>
           
           {/* Track Control Panels */}
-          <div className="flex-1 overflow-y-auto track-container">
+          <div 
+            ref={trackScrollRef}
+            className="flex-1 overflow-y-auto overflow-x-hidden track-container"
+            onScroll={handleTrackScroll}
+          >
             {isClient ? trackViews : (
               <div className="p-4 text-slate-400 text-sm">Loading tracks...</div>
             )}
@@ -725,12 +815,14 @@ export default function DAWInterface() {
           />
           
           {/* Track Content Area */}
-          <div className="flex-1 bg-slate-900 relative overflow-hidden">
+          <div 
+            ref={contentScrollRef}
+            className="flex-1 bg-slate-900 relative overflow-y-auto overflow-x-auto"
+            onScroll={handleContentScroll}
+          >
             {isClient ? trackContents : (
               <div className="p-4 text-slate-400 text-sm">Loading track content...</div>
             )}
-            
-
           </div>
         </div>
       </div>

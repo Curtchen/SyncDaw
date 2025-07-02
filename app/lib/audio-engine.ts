@@ -197,6 +197,7 @@ export class AudioTrack {
   private isRecording = false
   private isMuted = false
   private isSolo = false
+  private volume = 80 // Store the actual volume (0-100)
   private recordStartTime: number = 0
   private recordedDuration: number | null = null
   private segmentStartPos: number = 0 // timeline position where current segment starts
@@ -208,8 +209,18 @@ export class AudioTrack {
     this.trackGain = audioContext.createGain()
     this.panNode = audioContext.createStereoPanner()
     
+    // 设置初始音量
+    this.updateGain()
+    
     this.trackGain.connect(this.panNode)
     this.panNode.connect(destination)
+  }
+
+  private updateGain() {
+    // 计算最终的增益值：静音时为0，否则为实际音量
+    const gainValue = this.isMuted ? 0 : (this.volume / 100)
+    this.trackGain.gain.value = gainValue
+    console.log(`🔊 Track ${this.id} gain updated: ${gainValue} (volume: ${this.volume}%, muted: ${this.isMuted})`)
   }
 
   async startRecording() {
@@ -324,7 +335,18 @@ export class AudioTrack {
   }
 
   play(startTime = 0) {
-    if (!this.audioBuffer || this.isMuted) return
+    console.log(`🎵 Track ${this.id} play() called - startTime: ${startTime}s`)
+    console.log(`🎵 Track ${this.id} state - audioBuffer: ${!!this.audioBuffer}, muted: ${this.isMuted}, volume: ${this.volume}%`)
+    
+    if (!this.audioBuffer) {
+      console.log(`❌ Track ${this.id} has no audio buffer to play`)
+      return
+    }
+    
+    if (this.isMuted) {
+      console.log(`🔇 Track ${this.id} is muted, skipping playback`)
+      return
+    }
 
     this.stop() // Stop any currently playing audio
 
@@ -332,24 +354,34 @@ export class AudioTrack {
     this.sourceNode.buffer = this.audioBuffer
     this.sourceNode.connect(this.trackGain)
     
+    console.log(`🎵 Track ${this.id} starting audio buffer playback from ${startTime}s`)
+    this.sourceNode.start(0, startTime)
+    
     // If we have a recorded duration, stop at that exact time
     if (this.recordedDuration != null) {
       const stopTime = this.audioContext.currentTime + (this.recordedDuration - startTime)
+      console.log(`🎵 Track ${this.id} scheduled to stop at ${stopTime}s (recorded duration: ${this.recordedDuration}s)`)
       this.sourceNode.stop(stopTime)
     }
-    
-    this.sourceNode.start(0, startTime)
   }
 
   stop() {
     if (this.sourceNode) {
-      this.sourceNode.stop()
+      try {
+        // AudioScheduledSourceNode can only be stopped if it's been started
+        // and hasn't already ended. Use try-catch to handle state errors safely.
+        this.sourceNode.stop()
+      } catch (error) {
+        // This can happen if the node has already ended or was never started
+        console.log(`🔇 Track ${this.id} sourceNode stop() failed (likely already ended):`, error instanceof Error ? error.message : String(error))
+      }
       this.sourceNode = null
     }
   }
 
   setVolume(volume: number) {
-    this.trackGain.gain.value = volume / 100
+    this.volume = Math.max(0, Math.min(100, volume))
+    this.updateGain()
   }
 
   setPan(pan: number) {
@@ -358,7 +390,7 @@ export class AudioTrack {
 
   setMuted(muted: boolean) {
     this.isMuted = muted
-    this.trackGain.gain.value = muted ? 0 : 1
+    this.updateGain()
   }
 
   setSolo(solo: boolean) {
@@ -375,9 +407,7 @@ export class AudioTrack {
 
   get duration(): number {
     // Return recorded duration if available, otherwise audioBuffer duration
-    const result = this.recordedDuration != null ? this.recordedDuration : (this.audioBuffer ? this.audioBuffer.duration : 0)
-    console.log(`📏 Track ${this.id} duration: ${result}s (recorded: ${this.recordedDuration}, buffer: ${this.audioBuffer?.duration || 0})`)
-    return result
+    return this.recordedDuration != null ? this.recordedDuration : (this.audioBuffer ? this.audioBuffer.duration : 0)
   }
 
   get recordingState(): boolean {
