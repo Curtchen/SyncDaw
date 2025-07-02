@@ -14,6 +14,10 @@ export class AudioEngine {
   private metronomeGain: GainNode | null = null
   private metronomeIntervalId: number | null = null
   private isMetronomeOn = false
+  // Monitoring (live input passthrough) state
+  private monitorStream: MediaStream | null = null
+  private monitorSource: MediaStreamAudioSourceNode | null = null
+  private isMonitoringOn = false
 
   async initialize() {
     if (this.isInitialized) return
@@ -107,6 +111,9 @@ export class AudioEngine {
 
     // Stop metronome if running
     this.stopMetronome()
+
+    // Stop monitoring if enabled
+    this.disableMonitoring()
   }
 
   /* ===================== Metronome ===================== */
@@ -183,6 +190,78 @@ export class AudioEngine {
     osc.start()
     osc.stop(this.audioContext.currentTime + 0.06)
   }
+
+  /* ===================== Monitoring ===================== */
+
+  /** Enable input monitoring: routes microphone input directly to the master output. */
+  async enableMonitoring() {
+    if (this.isMonitoringOn) return
+    if (!this.audioContext || !this.masterGain) return
+
+    try {
+      // For Edge browsers explicitly request permission first to avoid errors
+      if (BrowserCompat.isEdge()) {
+        const granted = await BrowserCompat.requestAudioPermission()
+        if (!granted) throw new Error('Audio permission denied for monitoring')
+      }
+
+      // Reuse existing stream if any
+      if (!this.monitorStream) {
+        this.monitorStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }
+        })
+      }
+
+      // Create a MediaStream source and connect to master
+      this.monitorSource = this.audioContext.createMediaStreamSource(this.monitorStream)
+      this.monitorSource.connect(this.masterGain)
+      this.isMonitoringOn = true
+      console.log('🎧 Monitoring enabled')
+    } catch (error) {
+      console.error('❌ Failed to enable monitoring:', error)
+    }
+  }
+
+  /** Disable input monitoring */
+  disableMonitoring() {
+    if (!this.isMonitoringOn) return
+    if (this.monitorSource) {
+      try {
+        this.monitorSource.disconnect()
+      } catch (e) {
+        // ignore
+      }
+      this.monitorSource = null
+    }
+
+    // Stop and release stream tracks
+    if (this.monitorStream) {
+      this.monitorStream.getTracks().forEach((t) => {
+        try {
+          t.stop()
+        } catch (e) {
+          /* ignore */
+        }
+      })
+      this.monitorStream = null
+    }
+
+    this.isMonitoringOn = false
+    console.log('🎧 Monitoring disabled')
+  }
+
+  /** Toggle input monitoring on/off */
+  async toggleMonitoring() {
+    if (this.isMonitoringOn) {
+      this.disableMonitoring()
+    } else {
+      await this.enableMonitoring()
+    }
+  }
 }
 
 export class AudioTrack {
@@ -241,18 +320,31 @@ export class AudioTrack {
         }
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ 
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: false,
           noiseSuppression: false,
-          autoGainControl: false
+          autoGainControl: false,
+          sampleRate: this.audioContext.sampleRate,
+          channelCount: 2
         }
       })
       
+      // Prefer uncompressed PCM first, then WAV, then Opus
+      let preferredMime = ''
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=pcm')) {
+        preferredMime = 'audio/webm;codecs=pcm'
+      } else if (MediaRecorder.isTypeSupported('audio/wav')) {
+        preferredMime = 'audio/wav'
+      } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+        preferredMime = 'audio/webm;codecs=opus'
+      } else {
+        preferredMime = '' // let browser choose
+      }
+
       this.recorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-          ? 'audio/webm;codecs=opus' 
-          : 'audio/wav'
+        mimeType: preferredMime,
+        audioBitsPerSecond: 256000 // 256 kbps for better quality
       })
       
       this.recordedChunks = []

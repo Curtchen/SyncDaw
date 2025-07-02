@@ -13,6 +13,7 @@ interface TrackContentProps {
   isRecording: boolean
   currentTime: number
   onTrackUpdate: (updates: Partial<Track>) => void
+  onTimeChange: (time: number) => void
 }
 
 export default function TrackContent({
@@ -23,10 +24,22 @@ export default function TrackContent({
   isPlaying,
   isRecording,
   currentTime,
-  onTrackUpdate
+  onTrackUpdate,
+  onTimeChange
 }: TrackContentProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerWidth, setContainerWidth] = useState(800)
+
+  // Drag to scrub playhead
+  const draggingRef = useRef(false)
+
+  const posToTime = (clientX: number) => {
+    if (!containerRef.current) return 0
+    const rect = containerRef.current.getBoundingClientRect()
+    const x = clientX - rect.left
+    const percentage = Math.max(0, Math.min(1, x / rect.width))
+    return percentage * duration
+  }
 
   // 监听容器尺寸变化
   useEffect(() => {
@@ -46,6 +59,27 @@ export default function TrackContent({
       ref={containerRef}
       className="relative bg-slate-900 border-b border-slate-700 overflow-hidden"
       style={{ height: `${height}px` }}
+      onMouseDown={(e) => {
+        const t = posToTime(e.clientX)
+        onTimeChange(t)
+        draggingRef.current = true
+        e.preventDefault()
+        e.stopPropagation()
+      }}
+      onMouseMove={(e) => {
+        if (!draggingRef.current) return
+        onTimeChange(posToTime(e.clientX))
+        e.preventDefault()
+        e.stopPropagation()
+      }}
+      onMouseUp={(e) => {
+        if (draggingRef.current) {
+          onTimeChange(posToTime(e.clientX))
+          draggingRef.current = false
+          e.preventDefault()
+          e.stopPropagation()
+        }
+      }}
     >
       {/* 波形显示 */}
       <div className="w-full h-full">

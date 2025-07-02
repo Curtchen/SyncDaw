@@ -84,6 +84,16 @@ export function useAudioEngine() {
     return engineRef.current?.getAllTrackDurations() || {}
   }
 
+  /* ========= Metronome & Monitoring wrappers ========= */
+
+  const toggleMetronome = (bpm: number = 120, volume: number = 50) => {
+    engineRef.current?.toggleMetronome(bpm, volume)
+  }
+
+  const toggleMonitoring = () => {
+    engineRef.current?.toggleMonitoring()
+  }
+
   return {
     isInitialized,
     masterVolume,
@@ -93,6 +103,8 @@ export function useAudioEngine() {
     setMasterVolume: updateMasterVolume,
     getMaxTrackDuration,
     getAllTrackDurations,
-    audioEngine: engineRef.current
+    audioEngine: engineRef.current,
+    toggleMetronome,
+    toggleMonitoring
   }
 }

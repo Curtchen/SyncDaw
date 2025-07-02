@@ -10,7 +10,18 @@ import { Track } from './types/track'
 import { useTransport } from './state/transport'
 
 export default function DAWInterface() {
-  const { isInitialized, masterVolume, createTrack, getTrack, removeTrack: removeAudioTrack, setMasterVolume, getMaxTrackDuration, getAllTrackDurations } = useAudioEngine()
+  const {
+    isInitialized,
+    masterVolume,
+    createTrack,
+    getTrack,
+    removeTrack: removeAudioTrack,
+    setMasterVolume,
+    getMaxTrackDuration,
+    getAllTrackDurations,
+    toggleMetronome: engineToggleMetronome,
+    toggleMonitoring: engineToggleMonitoring
+  } = useAudioEngine()
   
   // Project settings
   const [projectName, setProjectName] = useState('Untitled')
@@ -22,7 +33,7 @@ export default function DAWInterface() {
   // Client-side flag
   const [isClient, setIsClient] = useState(false)
   
-  const { isPlaying, currentTime, play: transportPlay, pause: transportPause, togglePlay, stop: transportStop, seek: seekTransport } = useTransport()
+  const { isPlaying, currentTime, play: transportPlay, pause: transportPause, togglePlay, stop: transportStop, seek: seekTransport, setLoop: transportSetLoop } = useTransport()
   const [isRecording, setIsRecording] = useState(false)
   const [isRecordingAutomation, setIsRecordingAutomation] = useState(false)
   const [isLoopEnabled, setIsLoopEnabled] = useState(false)
@@ -195,20 +206,30 @@ export default function DAWInterface() {
   }, [isInitialized, isRecording, tracks, getTrack, createTrack])
 
   const toggleLoop = useCallback(() => {
-    setIsLoopEnabled(!isLoopEnabled)
-  }, [isLoopEnabled])
+    setIsLoopEnabled(prev => !prev)
+  }, [])
 
   const toggleMetronome = useCallback(() => {
-    setIsMetronomeEnabled(!isMetronomeEnabled)
-  }, [isMetronomeEnabled])
+    if (!isInitialized) return
+    engineToggleMetronome(bpm, 50)
+    setIsMetronomeEnabled(prev => !prev)
+  }, [isInitialized, engineToggleMetronome, bpm])
 
   const toggleMonitoring = useCallback(() => {
-    setIsMonitoringEnabled(!isMonitoringEnabled)
-  }, [isMonitoringEnabled])
+    if (!isInitialized) return
+    engineToggleMonitoring()
+    setIsMonitoringEnabled(prev => !prev)
+  }, [isInitialized, engineToggleMonitoring])
 
   const toggleAutoscroll = useCallback(() => {
     setIsAutoscrollEnabled(!isAutoscrollEnabled)
   }, [isAutoscrollEnabled])
+
+  // Timeline loop selection handler
+  const handleLoopChange = useCallback((start: number, end: number) => {
+    setLoopStart(start)
+    setLoopEnd(end)
+  }, [])
 
   const handleRewind = useCallback(() => {
     seekTransport(Math.max(0, currentTime - 5))
@@ -351,9 +372,10 @@ export default function DAWInterface() {
         isRecording={isRecording}
         currentTime={currentTime}
         onTrackUpdate={(updates) => updateTrack(track.id, updates)}
+        onTimeChange={seekTransport}
       />
     ))
-  }, [isClient, tracks, duration, isPlaying, isRecording, currentTime, updateTrack])
+  }, [isClient, tracks, duration, isPlaying, isRecording, currentTime, updateTrack, seekTransport])
 
   // Auto pause when playback reaches the end of the longest recorded track
   useEffect(() => {
@@ -407,6 +429,11 @@ export default function DAWInterface() {
       trackScrollRef.current.scrollTop = contentScrollRef.current.scrollTop
     }
   }, [])
+
+  // Sync loop settings with transport whenever they change
+  useEffect(() => {
+    transportSetLoop(isLoopEnabled, loopStart, loopEnd)
+  }, [isLoopEnabled, loopStart, loopEnd, transportSetLoop])
 
   return (
     <div className="h-screen bg-slate-900 text-white flex flex-col">
@@ -754,6 +781,7 @@ export default function DAWInterface() {
             isLoopEnabled={isLoopEnabled}
             loopStart={loopStart}
             loopEnd={loopEnd}
+            onLoopChange={handleLoopChange}
             trackCount={tracks.length}
             isRecording={isRecording}
             maxTrackDuration={getMaxTrackDuration()}
