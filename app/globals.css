@@ -91,6 +91,11 @@ body {
   color: var(--foreground);
   background: var(--background);
   font-family: Arial, Helvetica, sans-serif;
+  overflow-x: hidden; /* 隐藏页面级别的横向滚动条 */
+}
+
+html {
+  overflow-x: hidden; /* 确保HTML级别也不显示横向滚动条 */
 }
 
 @layer utilities {

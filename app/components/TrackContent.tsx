@@ -16,6 +16,7 @@ interface TrackContentProps {
   currentTime: number
   onTrackUpdate: (updates: Partial<Track>) => void
   onTimeChange: (time: number) => void
+  shouldClearWaveformData?: boolean
 }
 
 export default function TrackContent({
@@ -29,7 +30,8 @@ export default function TrackContent({
   isRecording,
   currentTime,
   onTrackUpdate,
-  onTimeChange
+  onTimeChange,
+  shouldClearWaveformData = false
 }: TrackContentProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerWidth, setContainerWidth] = useState(800)
@@ -107,6 +109,7 @@ export default function TrackContent({
           viewportDuration={viewportDuration}
           width={containerWidth}
           height={height} // 填满整个轨道高度
+          shouldClearData={shouldClearWaveformData}
         />
       </div>
       

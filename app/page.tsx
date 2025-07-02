@@ -51,6 +51,9 @@ export default function DAWInterface() {
   const viewportDuration = 30 // Fixed 30s viewport
   const playheadFixedAt = 15 // Red line fixed at 15s mark when scrolling
 
+  // 添加状态来跟踪是否应该清空波形数据（当按stop时）
+  const [shouldClearWaveformData, setShouldClearWaveformData] = useState(false)
+
   const [tracks, setTracks] = useState<Track[]>([
     {
       id: '1',
@@ -120,7 +123,20 @@ export default function DAWInterface() {
       }
     })
     seekTransport(isLoopEnabled ? loopStart : 0)
+    // 清空波形数据
+    setShouldClearWaveformData(true)
   }, [tracks, getTrack, isLoopEnabled, loopStart, transportStop, seekTransport])
+
+  // 重置清空波形数据的标记
+  useEffect(() => {
+    if (shouldClearWaveformData) {
+      // 短暂延迟后重置标记，让WaveformTrack有时间处理清空请求
+      const timer = setTimeout(() => {
+        setShouldClearWaveformData(false)
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [shouldClearWaveformData])
 
   const handleRecordAutomation = useCallback(() => {
     setIsRecordingAutomation(!isRecordingAutomation)
@@ -434,9 +450,10 @@ export default function DAWInterface() {
         onTimeChange={seekTransport}
         viewportStart={viewportStart}
         viewportDuration={viewportDuration}
+        shouldClearWaveformData={shouldClearWaveformData}
       />
     ))
-  }, [isClient, tracks, duration, isPlaying, isRecording, currentTime, updateTrack, seekTransport, viewportStart, viewportDuration])
+  }, [isClient, tracks, duration, isPlaying, isRecording, currentTime, updateTrack, seekTransport, viewportStart, viewportDuration, shouldClearWaveformData])
 
   // Auto pause when playback reaches the end of the longest recorded track
   useEffect(() => {
@@ -497,7 +514,7 @@ export default function DAWInterface() {
   }, [isLoopEnabled, loopStart, loopEnd, transportSetLoop])
 
   return (
-    <div className="h-screen bg-slate-900 text-white flex flex-col">
+    <div className="h-screen bg-slate-900 text-white flex flex-col overflow-x-hidden">
       {/* Audio Activation Banner - 只在客户端且音频引擎未激活时显示 */}
       {isClient && !isInitialized && (
         <div className="bg-orange-600 text-white px-4 py-2 text-center text-sm flex items-center justify-center gap-2">
@@ -638,7 +655,6 @@ export default function DAWInterface() {
               onClick={handleRecord}
               onMouseDown={(e) => e.stopPropagation()}
               onMouseUp={(e) => e.stopPropagation()}
-              disabled={!isInitialized}
               className={`w-8 h-8 rounded flex items-center justify-center relative z-10 transition-colors duration-150 ${
                 !isInitialized 
                   ? 'bg-slate-600 text-slate-500 cursor-not-allowed' 
@@ -855,7 +871,7 @@ export default function DAWInterface() {
           {/* Track Content Area */}
           <div 
             ref={contentScrollRef}
-            className="flex-1 bg-slate-900 relative overflow-y-auto overflow-x-auto"
+            className="flex-1 bg-slate-900 relative overflow-y-auto overflow-x-hidden"
             onScroll={handleContentScroll}
           >
             {isClient ? trackContents : (
@@ -884,23 +900,26 @@ export default function DAWInterface() {
                   width: `${(viewportDuration / getMaxTrackDuration()) * 100}%`
                 }}
                 onMouseDown={(e) => {
+                  // Capture parent element outside of subsequent callbacks to avoid React synthetic event pooling issues
+                  const parentElement = (e.currentTarget as HTMLElement).parentElement
+                  if (!parentElement) return
+
                   const startDrag = (clientX: number) => {
-                    const rect = e.currentTarget.parentElement?.getBoundingClientRect()
-                    if (!rect) return
+                    const rect = parentElement.getBoundingClientRect()
                     const x = clientX - rect.left
                     const percentage = Math.max(0, Math.min(1, x / rect.width))
                     const newStart = percentage * getMaxTrackDuration() - viewportDuration / 2
                     handleViewportScroll(newStart)
                   }
-                  
+
                   startDrag(e.clientX)
-                  
-                  const handleMouseMove = (e: MouseEvent) => startDrag(e.clientX)
+
+                  const handleMouseMove = (ev: MouseEvent) => startDrag(ev.clientX)
                   const handleMouseUp = () => {
                     document.removeEventListener('mousemove', handleMouseMove)
                     document.removeEventListener('mouseup', handleMouseUp)
                   }
-                  
+
                   document.addEventListener('mousemove', handleMouseMove)
                   document.addEventListener('mouseup', handleMouseUp)
                   e.preventDefault()

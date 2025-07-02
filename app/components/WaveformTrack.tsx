@@ -14,6 +14,7 @@ interface WaveformTrackProps {
   height: number
   width: number
   amplitudeScale?: number  // 波形幅度缩放，0-1之间
+  shouldClearData?: boolean // 是否应该清空数据（通常在stop时触发）
 }
 
 export default function WaveformTrack({ 
@@ -26,7 +27,8 @@ export default function WaveformTrack({
   viewportDuration = 30,
   width,
   height,
-  amplitudeScale = 1    // 默认100%灵敏度
+  amplitudeScale = 1,    // 默认100%灵敏度
+  shouldClearData = false // 默认不清空数据
 }: WaveformTrackProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationRef = useRef<number>()
@@ -39,12 +41,14 @@ export default function WaveformTrack({
   const globalMinDataRef = useRef<Map<number, number>>(new Map()) // key: 时间索引, value: min值
   const globalMaxDataRef = useRef<Map<number, number>>(new Map()) // key: 时间索引, value: max值
   
-  // 记录录音开始的时间点，确保波形从正确位置开始
-  const recordingStartTimeRef = useRef<number | null>(null)
+  // 记录第一次录音开始的时间点，后续录音不重置
+  const firstRecordingStartRef = useRef<number | null>(null)
+  // 记录当前录音session的开始时间
+  const currentRecordingStartRef = useRef<number | null>(null)
   
   // keep latest props for non-reactive loops
-  const propsRef = useRef({ currentTime, duration, width, viewportStart, viewportDuration })
-  propsRef.current = { currentTime, duration, width, viewportStart, viewportDuration }
+  const propsRef = useRef({ currentTime, duration, width, viewportStart, viewportDuration, isRecording, isArmed })
+  propsRef.current = { currentTime, duration, width, viewportStart, viewportDuration, isRecording, isArmed }
 
   useEffect(() => {
     // reset data and start/stop audio capture
@@ -60,6 +64,19 @@ export default function WaveformTrack({
     }
   }, [isRecording, isArmed])
 
+  // 监听清空数据请求
+  useEffect(() => {
+    if (shouldClearData) {
+      // 清空所有录音数据
+      globalMinDataRef.current.clear()
+      globalMaxDataRef.current.clear()
+      firstRecordingStartRef.current = null
+      currentRecordingStartRef.current = null
+      // 重新绘制以清空画布
+      drawWaveform()
+    }
+  }, [shouldClearData])
+
   useEffect(() => {
     // redraw whenever timeline updates or viewport changes
     drawWaveform()
@@ -69,11 +86,15 @@ export default function WaveformTrack({
 
   const startRecording = async () => {
     try {
-      // 记录录音开始时的时间
-      recordingStartTimeRef.current = propsRef.current.currentTime
+      // 只在第一次录音时记录起始时间，后续录音不重置
+      if (firstRecordingStartRef.current === null) {
+        firstRecordingStartRef.current = propsRef.current.currentTime
+      }
       
-      // 如果是新的录音session，清除该轨道之前可能存在的数据
-      // （这里可以选择是否清除，取决于是否支持多次录音的叠加）
+      // 记录当前录音session的开始时间
+      currentRecordingStartRef.current = propsRef.current.currentTime
+      
+      // 不清除之前的数据，支持叠加录音
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       
@@ -85,7 +106,7 @@ export default function WaveformTrack({
       microphoneRef.current.connect(analyserRef.current)
       
       // 立即采集第一个数据点，确保波形从录音开始时刻就有数据
-      const startTime = recordingStartTimeRef.current
+      const startTime = currentRecordingStartRef.current
       const timeIndex = Math.floor(startTime * SAMPLES_PER_SECOND)
       globalMinDataRef.current.set(timeIndex, 0) // 初始静音状态
       globalMaxDataRef.current.set(timeIndex, 0)
@@ -155,10 +176,10 @@ export default function WaveformTrack({
     const amp = (rect.height / 2) * amplitudeScale
     
     // 如果还没有开始录音或没有数据，直接返回
-    if (recordingStartTimeRef.current === null || globalMinDataRef.current.size === 0) return
+    if (firstRecordingStartRef.current === null || globalMinDataRef.current.size === 0) return
     
     // 计算实际的绘制范围：从录音开始到当前时间（如果在录音中）
-    const recordStart = recordingStartTimeRef.current
+    const recordStart = firstRecordingStartRef.current
     const recordEnd = isRecording ? currentTime : Math.max(...Array.from(globalMinDataRef.current.keys())) / SAMPLES_PER_SECOND
     
     // 计算视口和录音数据的交集
