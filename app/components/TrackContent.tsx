@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import WaveformTrack from './WaveformTrack'
 import { Track } from '../types/track'
+import { useClips } from '../state/clips'
 
 interface TrackContentProps {
   track: Track
@@ -39,6 +40,13 @@ export default function TrackContent({
   // Drag to scrub playhead
   const draggingRef = useRef(false)
 
+  const clipsStore = useClips()
+  const trackClips = clipsStore.getClipsByTrack(trackId)
+
+  // Drag / resize refs
+  const dragClipIdRef = useRef<string | null>(null)
+  const resizeModeRef = useRef<'none' | 'left' | 'right'>('none')
+
   const posToTime = (clientX: number) => {
     if (!containerRef.current) return 0
     const rect = containerRef.current.getBoundingClientRect()
@@ -69,6 +77,47 @@ export default function TrackContent({
       resizeObserver.disconnect()
     }
   }, [])
+
+  const handleMouseDownClip = (e: React.MouseEvent, clipId: string, mode: 'body' | 'left' | 'right') => {
+    e.stopPropagation()
+    dragClipIdRef.current = clipId
+    resizeModeRef.current = mode === 'body' ? 'none' : mode
+    document.addEventListener('mousemove', handleMouseMoveClip)
+    document.addEventListener('mouseup', handleMouseUpClip)
+  }
+
+  const handleMouseMoveClip = (e: MouseEvent) => {
+    if (!containerRef.current || !dragClipIdRef.current) return
+
+    const clip = clipsStore.clips.find(c => c.id === dragClipIdRef.current)
+    if (!clip) return
+
+    const rect = containerRef.current.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const percentage = Math.max(0, Math.min(1, x / rect.width))
+    const time = viewportStart + percentage * viewportDuration
+
+    if (resizeModeRef.current === 'none') {
+      // move clip keeping relative offset
+      const offset = clip.duration / 2
+      const newStart = Math.max(0, time - offset)
+      clipsStore.updateClip(clip.id, { start: newStart })
+    } else if (resizeModeRef.current === 'left') {
+      const newStart = Math.min(time, clip.start + clip.duration - 0.1)
+      const newDuration = clip.duration + (clip.start - newStart)
+      clipsStore.updateClip(clip.id, { start: newStart, duration: newDuration })
+    } else if (resizeModeRef.current === 'right') {
+      const newDuration = Math.max(0.1, time - clip.start)
+      clipsStore.updateClip(clip.id, { duration: newDuration })
+    }
+  }
+
+  const handleMouseUpClip = () => {
+    dragClipIdRef.current = null
+    resizeModeRef.current = 'none'
+    document.removeEventListener('mousemove', handleMouseMoveClip)
+    document.removeEventListener('mouseup', handleMouseUpClip)
+  }
 
   return (
     <div 
@@ -119,6 +168,33 @@ export default function TrackContent({
           ● REC
         </div>
       )}
+
+      {/* Clips overlay */}
+      {trackClips.map((clip) => {
+        const leftPercent = ((clip.start - viewportStart) / viewportDuration) * 100
+        const widthPercent = (clip.duration / viewportDuration) * 100
+        return (
+          <div
+            key={clip.id}
+            className="absolute top-0 h-full bg-blue-600 bg-opacity-40 border border-blue-400 cursor-pointer clip-item"
+            style={{
+              left: `${leftPercent}%`,
+              width: `${widthPercent}%`
+            }}
+            onMouseDown={(e) => handleMouseDownClip(e, clip.id, 'body')}
+          >
+            {/* Resize handles */}
+            <div
+              className="absolute left-0 top-0 w-1 h-full bg-blue-300 cursor-ew-resize"
+              onMouseDown={(e) => handleMouseDownClip(e, clip.id, 'left')}
+            />
+            <div
+              className="absolute right-0 top-0 w-1 h-full bg-blue-300 cursor-ew-resize"
+              onMouseDown={(e) => handleMouseDownClip(e, clip.id, 'right')}
+            />
+          </div>
+        )
+      })}
     </div>
   )
 }

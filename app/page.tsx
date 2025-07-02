@@ -45,6 +45,8 @@ export default function DAWInterface() {
   const [bpm, setBpm] = useState(120)
   const [timeSignature, setTimeSignature] = useState({ numerator: 4, denominator: 4 })
   const [duration, setDuration] = useState(30) // 30 seconds
+  // For editable length field
+  const [lengthInput, setLengthInput] = useState('30')
 
   // Viewport scrolling for DAW-style recording
   const [viewportStart, setViewportStart] = useState(0) // Start time of viewport window
@@ -261,12 +263,20 @@ export default function DAWInterface() {
   }, [isRecording, currentTime, playheadFixedAt])
 
   // Handle manual viewport scrolling (when not recording)
-  const handleViewportScroll = useCallback((newStart: number) => {
+  const handleViewportScroll = useCallback((newStart: number, allowExtend: boolean = true) => {
     if (!isRecording) {
-      const maxStart = Math.max(0, getMaxTrackDuration() - viewportDuration)
-      setViewportStart(Math.max(0, Math.min(maxStart, newStart)))
+      const maxTrackDuration = getMaxTrackDuration()
+      const baseMaxStart = Math.max(0, maxTrackDuration - viewportDuration)
+
+      // Optional auto-extend (wheel/keyboard). Skip when not allowed (e.g., dragging pager)
+      if (allowExtend && newStart > baseMaxStart && !isPlaying && !isRecording) {
+        setDuration(prev => Math.max(prev, newStart + viewportDuration))
+      }
+
+      const updatedMaxStart = Math.max(0, Math.max(getMaxTrackDuration(), duration) - viewportDuration)
+      setViewportStart(Math.max(0, Math.min(updatedMaxStart, newStart)))
     }
-  }, [isRecording, getMaxTrackDuration, viewportDuration])
+  }, [isRecording, isPlaying, getMaxTrackDuration, viewportDuration, duration])
 
   // Calculate relative playhead position within viewport
   const getPlayheadPosition = useCallback(() => {
@@ -320,13 +330,13 @@ export default function DAWInterface() {
         case 'ArrowLeft':
           if (e.ctrlKey) {
             e.preventDefault()
-            handleViewportScroll(viewportStart - 5) // Scroll left 5 seconds
+            handleViewportScroll(viewportStart - 5)
           }
           break
         case 'ArrowRight':
           if (e.ctrlKey) {
             e.preventDefault()
-            handleViewportScroll(viewportStart + 5) // Scroll right 5 seconds
+            handleViewportScroll(viewportStart + 5)
           }
           break
       }
@@ -513,6 +523,20 @@ export default function DAWInterface() {
     transportSetLoop(isLoopEnabled, loopStart, loopEnd)
   }, [isLoopEnabled, loopStart, loopEnd, transportSetLoop])
 
+  // Keep input synced when duration changes externally
+  useEffect(() => {
+    setLengthInput(Math.floor(duration).toString())
+  }, [duration])
+
+  const commitNewLength = useCallback((value: string) => {
+    const parsed = parseFloat(value)
+    if (!isNaN(parsed) && parsed > 0) {
+      setDuration(parsed)
+      // Ensure viewport inside new range
+      setViewportStart(prev => Math.min(prev, Math.max(0, parsed - viewportDuration)))
+    }
+  }, [viewportDuration])
+
   return (
     <div className="h-screen bg-slate-900 text-white flex flex-col overflow-x-hidden">
       {/* Audio Activation Banner - 只在客户端且音频引擎未激活时显示 */}
@@ -688,9 +712,20 @@ export default function DAWInterface() {
               {formatTime(currentTime)}
             </div>
             <span className="text-slate-500 text-sm">/</span>
-            <div className="bg-black px-3 py-1 rounded font-mono text-slate-400 text-sm min-w-24 text-center">
-              {formatTime(Math.max(getMaxTrackDuration(), duration))}
-            </div>
+            <input
+              type="number"
+              min="1"
+              value={lengthInput}
+              onChange={(e) => setLengthInput(e.target.value)}
+              onBlur={(e) => commitNewLength(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  commitNewLength((e.target as HTMLInputElement).value)
+                }
+              }}
+              className="bg-black px-2 py-1 rounded font-mono text-slate-400 text-sm w-24 text-center border border-slate-600 focus:outline-none focus:border-blue-500"
+              title="Set total timeline length (seconds) and press Enter"
+            />
             <div className="text-slate-400 text-sm ml-2">
               {isRecording ? 'REC' : isPlaying ? 'PLAY' : 'STOP'}
               {isRecordingAutomation && ' AUTO'}
@@ -882,7 +917,7 @@ export default function DAWInterface() {
       </div>
 
       {/* Bottom Progress Bar (Pager) - Show when content exceeds viewport */}
-      {getMaxTrackDuration() > viewportDuration && (
+      {Math.max(getMaxTrackDuration(), duration) > viewportDuration && (
         <div className="bg-slate-800 border-t border-slate-600 px-4 py-2">
           <div className="flex items-center gap-4">
             <span className="text-slate-400 text-xs">Timeline:</span>
@@ -896,8 +931,8 @@ export default function DAWInterface() {
               <div 
                 className="absolute top-0 h-full bg-blue-500 rounded-full opacity-70 cursor-pointer"
                 style={{
-                  left: `${(viewportStart / getMaxTrackDuration()) * 100}%`,
-                  width: `${(viewportDuration / getMaxTrackDuration()) * 100}%`
+                  left: `${(viewportStart / Math.max(getMaxTrackDuration(), duration)) * 100}%`,
+                  width: `${(viewportDuration / Math.max(getMaxTrackDuration(), duration)) * 100}%`
                 }}
                 onMouseDown={(e) => {
                   // Capture parent element outside of subsequent callbacks to avoid React synthetic event pooling issues
@@ -908,8 +943,8 @@ export default function DAWInterface() {
                     const rect = parentElement.getBoundingClientRect()
                     const x = clientX - rect.left
                     const percentage = Math.max(0, Math.min(1, x / rect.width))
-                    const newStart = percentage * getMaxTrackDuration() - viewportDuration / 2
-                    handleViewportScroll(newStart)
+                    const newStart = percentage * Math.max(getMaxTrackDuration(), duration) - viewportDuration / 2
+                    handleViewportScroll(newStart, false)
                   }
 
                   startDrag(e.clientX)
@@ -930,14 +965,14 @@ export default function DAWInterface() {
               <div 
                 className="absolute top-0 w-0.5 h-full bg-red-500 pointer-events-none"
                 style={{
-                  left: `${(currentTime / getMaxTrackDuration()) * 100}%`
+                  left: `${(currentTime / Math.max(getMaxTrackDuration(), duration)) * 100}%`
                 }}
               />
             </div>
             
             {/* Time info */}
             <div className="text-slate-400 text-xs whitespace-nowrap">
-              {Math.floor(viewportStart)}s - {Math.floor(viewportStart + viewportDuration)}s / {Math.floor(getMaxTrackDuration())}s
+              {Math.floor(viewportStart)}s - {Math.floor(viewportStart + viewportDuration)}s / {Math.floor(Math.max(getMaxTrackDuration(), duration))}s
             </div>
           </div>
         </div>
