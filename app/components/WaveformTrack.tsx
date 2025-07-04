@@ -233,7 +233,7 @@ export default function WaveformTrack({
     }
     
     ctx.closePath()
-    ctx.fillStyle = 'rgba(59,130,246,0.6)'  // 半透明填充
+    ctx.fillStyle = 'rgba(59,130,246,1)'  // 半透明填充
     ctx.fill()
     ctx.strokeStyle = '#3b82f6'
     ctx.lineWidth = 0.5
@@ -249,7 +249,7 @@ export default function WaveformTrack({
       style={{ 
         width: '100%', 
         height: `${height}px`,
-        imageRendering: 'pixelated'
+        imageRendering: 'auto'
       }}
     />
   )

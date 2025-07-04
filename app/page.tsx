@@ -8,6 +8,7 @@ import SharedTimeline from './components/SharedTimeline'
 import { useAudioEngine } from './hooks/useAudioEngine'
 import { Track } from './types/track'
 import { useTransport } from './state/transport'
+import { useClips } from './state/clips'
 
 export default function DAWInterface() {
   const {
@@ -73,6 +74,9 @@ export default function DAWInterface() {
   const timelineRef = useRef<HTMLDivElement>(null)
   const trackScrollRef = useRef<HTMLDivElement>(null)
   const contentScrollRef = useRef<HTMLDivElement>(null)
+
+  // Clip store for visualising recorded audio
+  const clipsStore = useClips()
 
   // Client-side initialization
   useEffect(() => {
@@ -175,6 +179,27 @@ export default function DAWInterface() {
             const audioTrack = getTrack(track.id)
             audioTrack?.stopRecording()
             console.log(`⏹️ Stopping recording on track ${track.id}`)
+
+            // ----- Create visual clip for this recording (placeholder buffer) -----
+            try {
+              const recDuration = currentTime // how long recorded
+              if (recDuration > 0) {
+                const sampleRate = 44100
+                const buffer = new AudioBuffer({ length: Math.max(1, Math.floor(recDuration * sampleRate)), sampleRate })
+
+                // Replace any existing clip on this track
+                clipsStore.replaceClipForTrack(track.id, {
+                  id: `${track.id}-${Date.now()}`,
+                  trackId: track.id,
+                  type: 'audio',
+                  buffer,
+                  start: 0,
+                  duration: recDuration
+                })
+              }
+            } catch (err) {
+              console.warn('Failed to create placeholder clip', err)
+            }
           }
         })
         setIsRecording(false)
@@ -226,7 +251,7 @@ export default function DAWInterface() {
     } catch (error) {
       console.error(`❌ Error in handleRecord:`, error)
     }
-  }, [isInitialized, isRecording, tracks, getTrack, createTrack])
+  }, [isInitialized, isRecording, tracks, getTrack, createTrack, currentTime])
 
   const toggleLoop = useCallback(() => {
     setIsLoopEnabled(prev => !prev)
